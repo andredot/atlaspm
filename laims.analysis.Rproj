@@ -1,0 +1,25 @@
+Version: 1.0
+ProjectId: 54cbcbaf-4501-44a3-b621-b2048440f469
+
+RestoreWorkspace: No
+SaveWorkspace: No
+AlwaysSaveHistory: Yes
+
+EnableCodeIndexing: Yes
+UseSpacesForTab: Yes
+NumSpacesForTab: 2
+Encoding: UTF-8
+
+RnwWeave: knitr
+LaTeX: pdfLaTeX
+
+AutoAppendNewline: Yes
+StripTrailingWhitespace: Yes
+LineEndingConversion: Native
+
+BuildType: Package
+PackageUseDevtools: Yes
+PackageInstallArgs: --no-multiarch --with-keep.source
+PackageRoxygenize: rd,collate,namespace,vignette
+
+SpellingDictionary: en_US
