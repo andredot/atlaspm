@@ -3,7 +3,7 @@ library(tarchetypes)
 library(crew)  # parallel computing
 
 controller <- crew::crew_controller_local(
-  name = "laims.analysis_controller",
+  name = "atlaspm_controller",
   workers = 1
 )
 
