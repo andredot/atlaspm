@@ -9,7 +9,10 @@ License: file LICENSE
 Imports: 
     fs,
     geostan,
+    gtsummary,
+    janitor,
     purrr,
+    quarto,
     readr,
     sf,
     spdep,

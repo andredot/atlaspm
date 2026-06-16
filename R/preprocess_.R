@@ -101,97 +101,362 @@ preprocess_mortality <- function(mort_raw,
     dplyr::select(-dplyr::all_of(c(".code_norm", ".key4", ".key3")))
 }
 
-#' Crude preventable mortality rate by area of residence
+#' Crude mortality rate table by comune, wide over cause / group / mechanism
 #'
-#' Takes the preventable-deaths table (the output of
-#' \code{filter_preventable()}) together with a population denominator and
-#' returns the crude preventable mortality rate for each area of residence.
+#' Builds a wide crude-mortality-rate table with one row per area (comune by
+#' default) and one column per category of each classification, namely
+#' \code{cause} (columns prefixed \code{"C_"}), \code{group} (prefixed
+#' \code{"G_"}) and \code{mechanism} (prefixed \code{"M_"}). Every cell is the
+#' crude rate \code{deaths / population * per} (deaths per \code{per} residents,
+#' 100 000 by default).
+#'
+#' The area key is kept as a plain column (\code{group_var}) rather than baked
+#' into the rates, so the same comune-level table can later be re-aggregated to
+#' ASST, distretto, etc. by joining a crosswalk and re-deriving rates.
 #'
 #' Deaths are aggregated as the \strong{sum of the \code{weight} column}, so the
-#' eight causes the OECD/Eurostat list splits 50/50 between the preventable and
-#' treatable categories (tuberculosis, cervical cancer, diabetes and five
-#' cardiovascular causes) each count as 0.5 of a death. Set
-#' \code{weight_col = NULL} to count every record as a whole death instead.
+#' causes the OECD/Eurostat list splits 50/50 each count as 0.5 of a death. Set
+#' \code{weight_col = NULL} to count every record as a whole death.
 #'
-#' The rate is \emph{crude} (not age-standardised): the input is assumed to be a
-#' single premature-age band (0-74) already produced by
-#' \code{filter_preventable()}. The crude rate is
-#' \code{deaths / population * per}, i.e. per \code{per} residents
-#' (100 000 by default). Every area present in \code{population} is returned,
-#' including areas with no preventable deaths (rate 0).
+#' The denominator is read from a semicolon-separated population CSV with the
+#' columns \code{Codice comune;Eta;anno;sesso;Comune;numero}. Only the year
+#' \code{pop_year} (default 2023) is kept and \code{numero} is summed over all
+#' ages and both sexes to give one population figure per comune. The population
+#' \code{Codice comune} is matched to \code{mort_col} in \code{mort_count}
+#' (default \code{"comune_residenza_2023"}).
 #'
-#' @param preventable Data frame of preventable deaths, one row per death, as
-#'   returned by \code{filter_preventable()}. Must contain the grouping column
-#'   \code{group_var} and (unless \code{weight_col = NULL}) the weight column.
-#' @param population Population lookup table keyed by area of residence: either
-#'   a path to a CSV or a data frame, with one row per area. Must contain
-#'   \code{group_var} and \code{pop_col}.
-#' @param group_var Name of the area-of-residence column, present in both
-#'   \code{preventable} and \code{population}. Default \code{"area_residenza"}.
-#' @param pop_col Name of the population column in \code{population}.
-#'   Default \code{"population"}.
-#' @param weight_col Name of the weight column in \code{preventable}; deaths are
-#'   summed over it (50/50 causes contribute 0.5). Set to \code{NULL} to count
-#'   each record as one death. Default \code{"weight"}.
-#' @param per Rate denominator multiplier. Default \code{100000} gives the rate
-#'   per 100 000 residents.
+#' Every comune present in the population file is returned; comuni with no
+#' deaths get 0 in every rate column.
 #'
-#' @return A tibble with one row per area, sorted by descending rate, with the
-#'   columns: \code{group_var}, \code{deaths} (weighted death count),
-#'   \code{population}, and \code{crude_rate} (per \code{per} residents).
+#' @param mort_count Data frame of deaths, one row per death, containing the
+#'   area column \code{mort_col}, the classification columns \code{cause},
+#'   \code{group} and \code{mechanism}, and (unless \code{weight_col = NULL})
+#'   the weight column.
+#' @param population Path to the population CSV (or a pre-read data frame) with
+#'   columns \code{Codice comune}, \code{Eta}, \code{anno}, \code{sesso},
+#'   \code{Comune}, \code{numero}.
+#' @param group_var Name to give the area key in the output. Default
+#'   \code{"comune"}.
+#' @param mort_col Name of the comune column in \code{mort_count} that matches
+#'   the population \code{Codice comune}. Default \code{"comune_residenza_2023"}.
+#' @param class_vars Named character vector mapping classification columns in
+#'   \code{mort_count} to their output column prefix. Default
+#'   \code{c(cause = "C", group = "G", mechanism = "M")}.
+#' @param pop_year Census/population year to keep from the CSV. Default
+#'   \code{2023}.
+#' @param weight_col Name of the weight column in \code{mort_count}; deaths are
+#'   summed over it (50/50 causes contribute 0.5). \code{NULL} counts each
+#'   record as one death. Default \code{"weight"}.
+#' @param per Rate denominator multiplier. Default \code{100000}.
+#'
+#' @return A tibble with one row per comune: \code{group_var}, \code{population},
+#'   one crude-rate column per category named \code{<prefix>_<label>} with the
+#'   label cleaned to snake_case (e.g. \code{C_lung_cancer}, \code{G_cancer},
+#'   \code{M_immunisation_and_prophylaxis}), and a \code{total} column with the
+#'   crude rate over all deaths in the comune. Note the per-prefix columns do
+#'   not sum to \code{total}: each classification (cause / group / mechanism)
+#'   already partitions the same deaths, and split causes are counted under
+#'   more than one mechanism.
 #'
 #' @examples
 #' \dontrun{
-#' preventable <- filter_preventable(mort_raw, "preventable_lookup.csv")
+#' rates <- preprocess_cmr(mort_count, "popolazione.csv")
 #'
-#' # population denominator, one row per area:
-#' pop <- tibble::tibble(
-#'   area_residenza = c("Lazio", "Lombardia"),
-#'   population     = c(5700000, 9900000)
-#' )
-#'
-#' preproces_cmr(preventable, pop)
-#' # rate per 10,000 instead, with a differently named area column:
-#' preproces_cmr(preventable, pop, group_var = "asl", per = 10000)
+#' # re-aggregate comuni to ASST later via a crosswalk:
+#' rates |>
+#'   dplyr::left_join(asst_crosswalk, by = "comune") |>
+#'   dplyr::group_by(asst) # then recompute rates from counts at the new level
 #' }
 #'
-#' @seealso \code{\link{filter_preventable}}
-#' @importFrom dplyr mutate group_by across all_of summarise left_join
-#'   coalesce arrange desc |>
-#' @importFrom readr read_csv
-#' @importFrom rlang .data
+#' @importFrom dplyr mutate group_by across all_of any_of summarise left_join
+#'   coalesce rename filter select |>
+#' @importFrom tidyr pivot_wider
+#' @importFrom purrr imap_dfr
+#' @importFrom readr read_delim
+#' @importFrom rlang .data :=
+#' @importFrom janitor make_clean_names
 #' @export
-preprocess_cmr <- function(preventable,
-                          population,
-                          group_var  = "area_residenza",
-                          pop_col    = "population",
-                          weight_col = "weight",
-                          per        = 100000) {
+preprocess_cmr <- function(mort_count,
+                           population,
+                           group_var  = "comune",
+                           mort_col   = "comune_residenza_2023",
+                           class_vars = c(cause = "C", group = "G", mechanism = "M"),
+                           pop_year   = 2023,
+                           weight_col = "weight",
+                           per        = 100000) {
 
-  use_weight <- !is.null(weight_col) && weight_col %in% names(preventable)
+  use_weight <- !is.null(weight_col) && weight_col %in% names(mort_count)
 
-  # population is a lookup table: accept a CSV path or a data frame
+  # ---- 1. population denominator: one row per comune, 2023, all ages/sexes ----
   if (is.character(population)) {
-    population <- readr::read_csv(population, show_col_types = FALSE)
+    population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
   }
 
-  # 1. weighted death count per area (50/50 causes contribute 0.5)
-  deaths <- preventable |>
-    dplyr::mutate(.w = if (use_weight) .data[[weight_col]] else 1) |>
-    dplyr::group_by(dplyr::across(dplyr::all_of(group_var))) |>
-    dplyr::summarise(deaths = sum(.data[[".w"]], na.rm = TRUE),
-                     .groups = "drop")
+  pop <- population |>
+    dplyr::filter(.data[["anno"]] == pop_year) |>
+    dplyr::mutate(`Codice comune` = sprintf("%06d", as.integer(`Codice comune`))) |>
+    dplyr::group_by(.data[["Codice comune"]]) |>
+    dplyr::summarise(population = sum(.data[["numero"]], na.rm = TRUE),
+                     .groups = "drop") |>
+    dplyr::rename(!!group_var := "Codice comune")
 
-  # 2. tidy the denominator and standardise its column name to "population"
-  pop2 <- dplyr::select(population, dplyr::all_of(c(group_var, pop_col)))
-  names(pop2)[names(pop2) == pop_col] <- "population"
-
-  # 3. join denominator to deaths and compute the crude rate
-  pop2 |>
-    dplyr::left_join(deaths, by = group_var) |>
+  # ---- 2. weighted deaths per comune x (each classification, each level) ----
+  m <- mort_count |>
     dplyr::mutate(
-      deaths     = dplyr::coalesce(.data[["deaths"]], 0),
-      crude_rate = .data[["deaths"]] / .data[["population"]] * per
+      .w    = if (use_weight) .data[[weight_col]] else 1,
+      .area = as.character(.data[[mort_col]])
+    )
+
+  # long table of (comune, column-name, deaths), looping over classifications
+  counts <- purrr::imap_dfr(class_vars, function(prefix, var) {
+    lvls   <- unique(as.character(m[[var]]))
+    clean  <- stats::setNames(
+      paste0(prefix, "_", janitor::make_clean_names(lvls)),
+      lvls
+    )
+    m |>
+      dplyr::group_by(.area, .lvl = as.character(.data[[var]])) |>
+      dplyr::summarise(deaths = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop") |>
+      dplyr::mutate(col = clean[.lvl]) |>
+      dplyr::select(.area, col, deaths)
+  })
+
+  # ---- 3. widen counts, join onto full population list, divide by pop ----
+  # Wide counts for comuni that actually have deaths (one column per category).
+  wide_counts <- counts |>
+    tidyr::pivot_wider(
+      id_cols     = ".area",
+      names_from  = "col",
+      values_from = "deaths",
+      values_fill = 0
+    )
+
+  # Total deaths per comune (counted once, not summed across classifications).
+  totals <- m |>
+    dplyr::group_by(.area) |>
+    dplyr::summarise(total = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop")
+
+  wide_counts <- dplyr::left_join(wide_counts, totals, by = ".area")
+
+  rate_cols <- setdiff(names(wide_counts), ".area")
+
+  # Left-join onto EVERY comune in the population; comuni with no deaths get 0.
+  pop |>
+    dplyr::rename(.area = dplyr::all_of(group_var)) |>
+    dplyr::left_join(wide_counts, by = ".area") |>
+    dplyr::mutate(dplyr::across(dplyr::all_of(rate_cols),
+                                ~ dplyr::coalesce(.x, 0) / .data[["population"]] * per)) |>
+    dplyr::rename(!!group_var := ".area")
+}
+
+#' Indirectly standardised mortality table by comune, wide over cause / group / mechanism
+#'
+#' Companion to \code{\link{preprocess_cmr}} that returns indirectly
+#' age-sex-standardised mortality instead of the crude rate. For every area
+#' (comune by default) and every category of each classification - \code{cause}
+#' (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
+#' \code{mechanism} (\code{"M_"}) - it returns two columns: the SMR
+#' (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
+#' standardised rate (\code{<prefix>_<label>_isr}, SMR x the standard crude rate,
+#' per \code{per} residents).
+#'
+#' Indirect standardisation applies a standard schedule of age-sex specific
+#' rates to each area's own age-sex population to obtain \emph{expected} deaths,
+#' then forms SMR = observed / expected. The standard schedule is computed
+#' \strong{internally} from the pooled data: for each single year of age x sex
+#' (and category), the standard rate is the total deaths across all areas
+#' divided by the total population across all areas. Strata are single years of
+#' age (\code{eta} / \code{Eta}) crossed with sex (\code{sesso}).
+#'
+#' Deaths are weighted by \code{weight_col} (50/50 split causes contribute 0.5).
+#' Observed and expected deaths are aggregated on the same weighting, so the SMR
+#' is internally consistent. Every comune present in the population file is
+#' returned; comuni with no deaths get SMR/ISR of 0.
+#'
+#' @param mort_count Data frame of deaths, one row per death, containing the
+#'   area column \code{mort_col}, the strata columns \code{age_col} and
+#'   \code{sex_col}, the classification columns named in \code{class_vars}, and
+#'   (unless \code{weight_col = NULL}) the weight column.
+#' @param population Path to the semicolon-separated population CSV (or a
+#'   pre-read data frame) with columns \code{Codice comune}, \code{Eta},
+#'   \code{anno}, \code{sesso}, \code{Comune}, \code{numero}. \code{Eta} is the
+#'   single year of age and \code{numero} the population count.
+#' @param group_var Name to give the area key in the output. Default
+#'   \code{"comune"}.
+#' @param mort_col Comune column in \code{mort_count} matching the population
+#'   \code{Codice comune}. Default \code{"comune_residenza_2023"}.
+#' @param age_col,sex_col Age (single year) and sex columns in \code{mort_count}.
+#'   Defaults \code{"eta"} and \code{"sesso"}. They are matched to \code{Eta}
+#'   and \code{sesso} in the population file.
+#' @param class_vars Named character vector mapping classification columns in
+#'   \code{mort_count} to their output column prefix. Default
+#'   \code{c(cause = "C", group = "G", mechanism = "M")}.
+#' @param pop_year Population year to keep from the CSV. Default \code{2023}.
+#' @param weight_col Weight column in \code{mort_count}. \code{NULL} counts each
+#'   record as one death. Default \code{"weight"}.
+#' @param per Multiplier for the standardised rate. Default \code{100000}.
+#'
+#' @return A tibble with one row per comune: \code{group_var}, \code{population},
+#'   then for every category two columns \code{<prefix>_<label>_smr} and
+#'   \code{<prefix>_<label>_isr}, plus \code{total_smr} and \code{total_isr}
+#'   over all deaths. SMR is observed/expected; ISR is the SMR scaled by the
+#'   standard population's crude rate for that category.
+#'
+#' @examples
+#' \dontrun{
+#' smr <- preprocess_smr(mort_count, "popolazione.csv")
+#' }
+#'
+#' @seealso \code{\link{preprocess_cmr}} for the crude-rate version.
+#' @importFrom dplyr mutate group_by ungroup across all_of summarise left_join
+#'   inner_join coalesce rename filter select distinct |>
+#' @importFrom tidyr pivot_wider
+#' @importFrom purrr imap_dfr
+#' @importFrom readr read_delim
+#' @importFrom rlang .data :=
+#' @importFrom janitor make_clean_names
+#' @export
+preprocess_smr <- function(mort_count,
+                           population,
+                           group_var  = "comune",
+                           mort_col   = "comune_residenza_2023",
+                           age_col    = "eta",
+                           sex_col    = "sesso",
+                           class_vars = c(cause = "C", group = "G", mechanism = "M"),
+                           pop_year   = 2023,
+                           weight_col = "weight",
+                           per        = 100000) {
+
+  use_weight <- !is.null(weight_col) && weight_col %in% names(mort_count)
+
+  # ---- 1. population by comune x age x sex (single year), padded code ----
+  if (is.character(population)) {
+    population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
+  }
+
+  pop_strata <- population |>
+    dplyr::filter(.data[["anno"]] == pop_year) |>
+    dplyr::mutate(
+      .area = sprintf("%06d", as.integer(`Codice comune`)),  # match the 6-digit deaths code
+      .age  = as.integer(`Eta`),
+      .sex  = as.integer(.data[["sesso"]]),
+      .pop  = as.numeric(.data[["numero"]])
     ) |>
-    dplyr::arrange(dplyr::desc(.data[["crude_rate"]]))
+    dplyr::group_by(.area, .age, .sex) |>
+    dplyr::summarise(.pop = sum(.pop, na.rm = TRUE), .groups = "drop")
+
+  # total resident population per comune (all ages/sexes) for the output
+  pop_total <- pop_strata |>
+    dplyr::group_by(.area) |>
+    dplyr::summarise(population = sum(.pop), .groups = "drop")
+
+  # ---- 2. observed deaths per comune x category, and per stratum x category ----
+  m <- mort_count |>
+    dplyr::mutate(
+      .w    = if (use_weight) .data[[weight_col]] else 1,
+      .area = as.character(.data[[mort_col]]),
+      .age  = as.integer(.data[[age_col]]),
+      .sex  = as.integer(.data[[sex_col]])
+    )
+
+  # standard schedule denominator: total population per stratum across ALL areas
+  std_denom <- pop_strata |>
+    dplyr::group_by(.age, .sex) |>
+    dplyr::summarise(std_pop = sum(.pop), .groups = "drop")
+
+  total_std_pop <- sum(pop_strata$.pop)
+
+  # one tidy block per classification, then bind
+  blocks <- purrr::imap_dfr(class_vars, function(prefix, var) {
+    # clean DISTINCT levels once (avoids make_clean_names() uniquifying per row)
+    lvls  <- unique(as.character(m[[var]]))
+    clean <- stats::setNames(paste0(prefix, "_", janitor::make_clean_names(lvls)), lvls)
+
+    mc <- m |>
+      dplyr::mutate(.lvl = as.character(.data[[var]]))
+
+    # standard age-sex-specific rate per (level, age, sex): pooled deaths / pooled pop
+    std_rate <- mc |>
+      dplyr::group_by(.lvl, .age, .sex) |>
+      dplyr::summarise(std_deaths = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop") |>
+      dplyr::left_join(std_denom, by = c(".age", ".sex")) |>
+      dplyr::mutate(std_rate = std_deaths / std_pop)
+
+    # standard crude rate per level (for converting SMR -> ISR):
+    #   total pooled deaths / total pooled population
+    std_crude <- mc |>
+      dplyr::group_by(.lvl) |>
+      dplyr::summarise(std_crude = sum(.data[[".w"]], na.rm = TRUE) / total_std_pop,
+                       .groups = "drop")
+
+    # OBSERVED deaths per comune x level
+    observed <- mc |>
+      dplyr::group_by(.area, .lvl) |>
+      dplyr::summarise(observed = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop")
+
+    # EXPECTED deaths per comune x level = sum over strata of
+    #   (area pop in stratum) x (standard rate for that level/stratum)
+    expected <- pop_strata |>
+      dplyr::inner_join(std_rate, by = c(".age", ".sex"),
+                        relationship = "many-to-many") |>
+      dplyr::mutate(exp = .pop * std_rate) |>
+      dplyr::group_by(.area, .lvl) |>
+      dplyr::summarise(expected = sum(exp, na.rm = TRUE), .groups = "drop")
+
+    # combine: SMR = observed / expected ; ISR = SMR x standard crude rate x per
+    expected |>
+      dplyr::left_join(observed, by = c(".area", ".lvl")) |>
+      dplyr::left_join(std_crude, by = ".lvl") |>
+      dplyr::mutate(
+        observed = dplyr::coalesce(observed, 0),
+        smr      = dplyr::if_else(expected > 0, observed / expected, NA_real_),
+        isr      = smr * std_crude * per,
+        col      = clean[.lvl]
+      ) |>
+      dplyr::select(.area, col, smr, isr)
+  })
+
+  # ---- 3. add an all-cause "total" block (deaths counted once) ----
+  std_rate_tot <- m |>
+    dplyr::group_by(.age, .sex) |>
+    dplyr::summarise(std_deaths = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop") |>
+    dplyr::left_join(std_denom, by = c(".age", ".sex")) |>
+    dplyr::mutate(std_rate = std_deaths / std_pop)
+  std_crude_tot <- sum(m$.w, na.rm = TRUE) / total_std_pop
+
+  observed_tot <- m |>
+    dplyr::group_by(.area) |>
+    dplyr::summarise(observed = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop")
+  expected_tot <- pop_strata |>
+    dplyr::left_join(std_rate_tot, by = c(".age", ".sex")) |>
+    dplyr::mutate(exp = .pop * std_rate) |>
+    dplyr::group_by(.area) |>
+    dplyr::summarise(expected = sum(exp, na.rm = TRUE), .groups = "drop")
+  total_block <- expected_tot |>
+    dplyr::left_join(observed_tot, by = ".area") |>
+    dplyr::mutate(
+      observed  = dplyr::coalesce(observed, 0),
+      total_smr = dplyr::if_else(expected > 0, observed / expected, NA_real_),
+      total_isr = total_smr * std_crude_tot * per
+    ) |>
+    dplyr::select(.area, total_smr, total_isr)
+
+  # ---- 4. widen the per-category blocks (smr and isr), join totals + pop ----
+  wide_smr <- blocks |>
+    tidyr::pivot_wider(id_cols = ".area", names_from = "col",
+                       values_from = "smr", names_glue = "{col}_smr",
+                       values_fill = 0)
+  wide_isr <- blocks |>
+    tidyr::pivot_wider(id_cols = ".area", names_from = "col",
+                       values_from = "isr", names_glue = "{col}_isr",
+                       values_fill = 0)
+
+  pop_total |>
+    dplyr::left_join(wide_smr,    by = ".area") |>
+    dplyr::left_join(wide_isr,    by = ".area") |>
+    dplyr::left_join(total_block, by = ".area") |>
+    # comuni with no deaths: every standardised value is 0
+    dplyr::mutate(dplyr::across(-dplyr::all_of(c(".area", "population")),
+                                ~ dplyr::coalesce(.x, 0))) |>
+    dplyr::rename(!!group_var := ".area")
 }

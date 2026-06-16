@@ -22,6 +22,7 @@ editor:
 #| label: setup
 library(tidyverse)
 library(targets)
+library(gtsummary)
 
 theme_set(theme_minimal(base_size = 12))
 pal_fill <- function(...) scale_fill_viridis_d(..., option = "D", end = 0.95)
@@ -101,6 +102,19 @@ ggplot(mort_count, aes(y = fct_rev(fct_infreq(group)))) +
   labs(title = "Deaths by cause group", x = "Deaths", y = NULL)
 ```
 
+## Mechanism
+
+`mechanism` records the avoidability lever each death is attributed to
+(the preventable mechanisms together with the treatable arms).
+
+```{r}
+#| label: uni-mechanism
+#| fig-height: 5
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(mechanism)))) +
+  geom_bar(fill = "#3b528b") +
+  labs(title = "Deaths by mechanism", x = "Deaths", y = NULL)
+```
+
 ## Cause
 
 There are many individual causes, so the 20 most frequent are shown and
@@ -114,6 +128,28 @@ mort_count |>
   ggplot(aes(y = fct_rev(fct_infreq(cause)))) +
   geom_bar(fill = "#3b528b") +
   labs(title = "Deaths by cause (top 20)", x = "Deaths", y = NULL)
+```
+
+## Summary table
+
+A Table 1 summarising the categorical variables of interest across all
+deaths. Counts and column percentages are shown for each level.
+
+```{r}
+#| label: uni-table1
+mort_count |>
+  select(sesso, asst_2023, group, cause, mechanism) |>
+  mutate(cause = fct_lump_n(cause, 15)) |>
+  tbl_summary(
+    label = list(
+      sesso     ~ "Sex",
+      asst_2023 ~ "ASST (2023)",
+      group     ~ "Cause group",
+      cause     ~ "Cause",
+      mechanism ~ "Mechanism"
+    )
+  ) |>
+  bold_labels()
 ```
 
 # Bivariate distributions
@@ -157,3 +193,28 @@ ggplot(age_group, aes(x = eta, y = deaths, colour = group)) +
   labs(title = "Age pattern of mortality by cause group",
        x = "Age (years)", y = "Deaths", colour = "Cause group")
 ```
+
+## Mechanism by cause group
+
+How the avoidability mechanisms map onto cause groups. Each bar is a
+cause group, stacked by the count of deaths in each mechanism, so the
+plot shows both which groups carry the most deaths and the mix of
+mechanisms within each. (A given cause group can span more than one
+mechanism — e.g. the 50/50 split causes.)
+
+```{r}
+#| label: bi-group-mechanism
+#| fig-height: 6
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(group)), fill = mechanism)) +
+  geom_bar() +
+  pal_fill() +
+  labs(title = "Deaths by cause group and mechanism",
+       x = "Deaths", y = NULL, fill = "Mechanism")
+```
+
+::: {.callout-tip}
+To compare the mechanism *mix* across groups regardless of size, switch
+to `geom_bar(position = "fill")` and a percent x-axis; to read it the
+other way round — which groups feed each mechanism — swap the `y` and
+`fill` aesthetics.
+:::
