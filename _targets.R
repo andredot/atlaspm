@@ -30,37 +30,49 @@ tar_source()
 list(
 
   # Import your file from custom (shared) location, and preprocess them
-  tar_files_input(
-    db_raw_path,
-    # get_input_data_path("db_raw.csv"), # single
-    get_input_data_path() |>
-      list.files(pattern = "\\.csv$", full.names = TRUE) # multiple
-  ),
+  # tar_files_input(
+  #   db_raw_path,
+  #   # get_input_data_path("db_raw.csv"), # single
+  #   get_input_data_path() |>
+  #     list.files(pattern = "\\.csv$", full.names = TRUE) # multiple
+  # ),
 
-  tar_target(db_raw, import_data(db_raw_path)),
-  tar_target(db, preprocess(db_raw)),
+  # LOOK UP TABLES
+  tar_target(lookup_causes, get_input_data_path("avoidable_lookup.csv")),
+
+  # IMPORT
+
+  tar_target(mort_path, get_input_data_path("mort_2023.csv")),
+  tar_target(mort_raw, import_mortality(mort_path)),
+
+  # PREPROCESSING
+
+  tar_target(mort_count, preprocess_mortality(mort_raw,
+                                              lookup_causes,
+                                              code_col = "causa",
+                                              age_col = "eta")),
 
 
-  # Call your custom functions as needed.
-  tar_target(relevantResult, relevant_computation(db)),
-
-  # compile yor report
-  tar_quarto(report, here::here("reports/report.qmd")),
-
-
-  # Decide what to share with other, and do it in a standard RDS format
-  tar_target(
-    objectToShare,
-    list(
-      relevant_result = relevantResult
-    )
-  ),
-  tar_target(
-    shareOutput,
-    share_objects(objectToShare),
-    format = "file",
-    pattern = map(objectToShare)
-  ),
+  # # Call your custom functions as needed.
+  # tar_target(relevantResult, relevant_computation(db)),
+  #
+  # # compile yor report
+  tar_quarto(explore_mort_count, path = "reports\\mortality_explore.qmd"),
+  #
+  #
+  # # Decide what to share with other, and do it in a standard RDS format
+  # tar_target(
+  #   objectToShare,
+  #   list(
+  #     relevant_result = relevantResult
+  #   )
+  # ),
+  # tar_target(
+  #   shareOutput,
+  #   share_objects(objectToShare),
+  #   format = "file",
+  #   pattern = map(objectToShare)
+  # ),
 
 
   tar_target(JustDontCareLastComma, NULL)

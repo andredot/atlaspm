@@ -1,0 +1,159 @@
+---
+title: "Avoidable mortality: exploratory overview"
+subtitle: "Deaths aged 0–74, preventable and treatable causes"
+date: 2026-10-06
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: show
+    fig-width: 8
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(targets)
+
+theme_set(theme_minimal(base_size = 12))
+pal_fill <- function(...) scale_fill_viridis_d(..., option = "D", end = 0.95)
+pal_col  <- function(...) scale_colour_viridis_d(..., option = "D", end = 0.95)
+```
+
+This report describes `mort_count`, the output of
+`preprocess_mortality()`.
+
+It assumes **one row per death**, with the columns `sex`,
+`area_residenza`, `asst_2023`, `eta` (age in years), `group` (cause
+group) and `cause` (specific cause). If your file is instead
+pre-aggregated with a count column `n`, expand it once with
+`mort_count <- tidyr::uncount(mort_count, n)` and everything below works
+unchanged.
+
+```{r}
+#| label: data
+tar_load(mort_count)
+glimpse(mort_count)
+```
+
+# Univariate distributions
+
+## Sex
+
+```{r}
+#| label: uni-sex
+ggplot(mort_count, aes(x = sesso, fill = sesso)) +
+  geom_bar() +
+  pal_fill(guide = "none") +
+  labs(title = "Deaths by sex", x = NULL, y = "Deaths")
+```
+
+## Area of residence
+
+```{r}
+#| label: uni-area
+#| fig-height: 7
+mort_count |>
+  mutate(area_residenza = fct_lump_n(area_residenza, n = 25)) |>
+  ggplot(aes(y = fct_rev(fct_infreq(area_residenza)))) +
+  geom_bar(fill = "#3b528b") +
+  labs(title = "Deaths by area of residence (top 25)", x = "Deaths", y = NULL)
+```
+
+## ASST (2023)
+
+```{r}
+#| label: uni-asst
+#| fig-height: 7
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst_2023)))) +
+  geom_bar(fill = "#3b528b") +
+  labs(title = "Deaths by ASST (2023)", x = "Deaths", y = NULL)
+```
+
+## Age at death
+
+Note that the population is restricted to premature deaths (under 75),
+so the distribution is bounded at 74.
+
+```{r}
+#| label: uni-eta
+ggplot(mort_count, aes(x = eta)) +
+  geom_histogram(binwidth = 5, boundary = 0,
+                 fill = "#3b528b", colour = "white") +
+  labs(title = "Age-at-death distribution", x = "Age (years)", y = "Deaths")
+```
+
+## Cause group
+
+```{r}
+#| label: uni-group
+#| fig-height: 6
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(group)))) +
+  geom_bar(fill = "#3b528b") +
+  labs(title = "Deaths by cause group", x = "Deaths", y = NULL)
+```
+
+## Cause
+
+There are many individual causes, so the 20 most frequent are shown and
+the remainder collapsed into "Other".
+
+```{r}
+#| label: uni-cause
+#| fig-height: 8
+mort_count |>
+  mutate(cause = fct_lump_n(cause, n = 20)) |>
+  ggplot(aes(y = fct_rev(fct_infreq(cause)))) +
+  geom_bar(fill = "#3b528b") +
+  labs(title = "Deaths by cause (top 20)", x = "Deaths", y = NULL)
+```
+
+# Bivariate distributions
+
+## Cause-group composition within each ASST
+
+Each bar is filled to 100%, so it shows the *share* of deaths
+attributable to each cause group within an ASST, making the mix
+comparable across areas of different size.
+
+```{r}
+#| label: bi-asst-group
+#| fig-height: 7
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst_2023)), fill = group)) +
+  geom_bar(position = "fill") +
+  scale_x_continuous(labels = scales::percent) +
+  pal_fill() +
+  labs(title = "Cause-group composition within each ASST",
+       x = "Share of deaths", y = NULL, fill = "Cause group")
+```
+
+## Age pattern of mortality by cause group
+
+Deaths are aggregated to a count per single year of age within each
+cause group; each point is one age × group cell (`alpha = 0.2` to cope
+with overplotting), and the smoothed line summarises how mortality
+shifts across the age range — different diseases concentrate at clearly
+different ages.
+
+```{r}
+#| label: bi-group-age
+#| fig-height: 6
+age_group <- mort_count |>
+  count(group, eta, name = "deaths")
+
+ggplot(age_group, aes(x = eta, y = deaths, colour = group)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(se = FALSE, linewidth = 0.8) +
+  facet_wrap(~ group, scales = "free_y") +
+  pal_col() +
+  labs(title = "Age pattern of mortality by cause group",
+       x = "Age (years)", y = "Deaths", colour = "Cause group")
+```
