@@ -9,7 +9,7 @@ preprocess_cmr(
   population,
   group_var = "comune",
   mort_col = "comune_residenza_2023",
-  class_vars = c(causa = "C", group = "G", mechanism = "M"),
+  class_vars = c(cause = "C", group = "G", mechanism = "M"),
   pop_year = 2023,
   weight_col = "weight",
   per = 1e+05
@@ -17,7 +17,7 @@ preprocess_cmr(
 }
 \arguments{
 \item{mort_count}{Data frame of deaths, one row per death, containing the
-area column \code{mort_col}, the classification columns \code{causa},
+area column \code{mort_col}, the classification columns \code{cause},
 \code{group} and \code{mechanism}, and (unless \code{weight_col = NULL})
 the weight column.}
 
@@ -33,7 +33,7 @@ the population \code{Codice comune}. Default \code{"comune_residenza_2023"}.}
 
 \item{class_vars}{Named character vector mapping classification columns in
 \code{mort_count} to their output column prefix. Default
-\code{c(causa = "C", group = "G", mechanism = "M")}.}
+\code{c(cause = "C", group = "G", mechanism = "M")}.}
 
 \item{pop_year}{Census/population year to keep from the CSV. Default
 \code{2023}.}
@@ -46,14 +46,18 @@ record as one death. Default \code{"weight"}.}
 }
 \value{
 A tibble with one row per comune: \code{group_var}, \code{population},
-and one crude-rate column per category, named \code{<prefix>_<label>} with
-the label cleaned to snake_case (e.g. \code{C_lung_cancer},
-\code{G_cancer}, \code{M_immunisation_and_prophylaxis}).
+one crude-rate column per category named \code{<prefix>_<label>} with the
+label cleaned to snake_case (e.g. \code{C_lung_cancer}, \code{G_cancer},
+\code{M_immunisation_and_prophylaxis}), and a \code{total} column with the
+crude rate over all deaths in the comune. Note the per-prefix columns do
+not sum to \code{total}: each classification (cause / group / mechanism)
+already partitions the same deaths, and split causes are counted under
+more than one mechanism.
 }
 \description{
 Builds a wide crude-mortality-rate table with one row per area (comune by
 default) and one column per category of each classification, namely
-\code{causa} (columns prefixed \code{"C_"}), \code{group} (prefixed
+\code{cause} (columns prefixed \code{"C_"}), \code{group} (prefixed
 \code{"G_"}) and \code{mechanism} (prefixed \code{"M_"}). Every cell is the
 crude rate \code{deaths / population * per} (deaths per \code{per} residents,
 100 000 by default).

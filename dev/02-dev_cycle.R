@@ -5,7 +5,7 @@ renv::install(meta_pkgs)
 
 prj_pkgs <- c("fs", "readr", "stringr", "purrr",
               "sf","spdep","geostan",
-              "quarto", "gtsummary", "janitor")
+              "quarto", "gtsummary", "janitor", "plotly")
 renv::install(prj_pkgs)
 purrr::walk(prj_pkgs, usethis::use_package)
 

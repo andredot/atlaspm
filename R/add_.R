@@ -50,7 +50,7 @@
 #' @export
 add_geo <- function(data,
                     shp,
-                    data_key   = "Codice comune",
+                    data_key   = "comune",
                     shp_key    = "PRO_COM_T",
                     keep       = c("data", "geometry"),
                     code_width = 6) {
@@ -62,10 +62,16 @@ add_geo <- function(data,
   data <- dplyr::mutate(data, .key = pad(.data[[data_key]]))
   shp  <- dplyr::mutate(shp,  .key = pad(.data[[shp_key]]))
 
+  # Keep the sf (shp) on the LEFT of the join. dplyr only preserves the sf class
+  # when the sf is the left table; joining a plain tibble on the left returns a
+  # demoted tibble carrying a bare sfc, which later breaks dplyr::mutate() with
+  # "all columns must be vectors / geometry is an sfc object".
   joined <- if (keep == "data") {
-    dplyr::left_join(data, shp, by = ".key")    # every row of data kept
+    # keep every row of `data`  -> inner-style on data's keys: right_join(shp, data)
+    dplyr::right_join(shp, data, by = ".key")
   } else {
-    dplyr::right_join(data, shp, by = ".key")   # every comune in the shapefile kept
+    # keep every comune in `shp`
+    dplyr::left_join(shp, data, by = ".key")
   }
 
   joined |>

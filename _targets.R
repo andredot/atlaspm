@@ -49,9 +49,15 @@ list(
   tar_target(mort_smr, preprocess_smr(mort_count,
                                       pop_table)),
 
-  # MAPS
-  tar_target(map_smr, mort_smr |> add_geo(pop_shp, data_key = "comune") |>
+  # SCATTER
+  tar_target(scatter_cmr_isr_overall,   plot_cmr_isr(mort_crude, mort_smr)),
+  tar_target(scatter_cmr_isr_mechanism, plot_cmr_isr_facets(mort_crude, mort_smr)),
+
+    # MAPS
+  tar_target(map_smr_overall, mort_smr |> add_geo(pop_shp, data_key = "comune") |>
                plot_smr_map()),
+  tar_target(map_smr_mechanism, mort_smr |> add_geo(pop_shp, data_key = "comune") |>
+               plot_smr_facets()),
 
   # REPORT
   tar_quarto(explore_mort_count, path = "reports\\mortality_explore.qmd"),
