@@ -52,9 +52,12 @@ record as one death. Default \code{"weight"}.}
 \value{
 A tibble with one row per comune: \code{group_var}, \code{population},
 then for every category two columns \code{<prefix>_<label>_smr} and
-\code{<prefix>_<label>_isr}, plus \code{total_smr} and \code{total_isr}
-over all deaths. SMR is observed/expected; ISR is the SMR scaled by the
-standard population's crude rate for that category.
+\code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
+\code{total_exp} (expected deaths under the standard schedule),
+\code{total_smr} and \code{total_isr} over all deaths. SMR is
+observed/expected; ISR is the SMR scaled by the standard population's crude
+rate for that category. \code{total_obs}/\code{total_exp} are the response
+and offset a Poisson spatial model (e.g. BYM2) needs.
 }
 \description{
 Companion to \code{\link{preprocess_cmr}} that returns indirectly

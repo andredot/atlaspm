@@ -11,7 +11,7 @@
 #'   column, e.g. \code{add_geo(preprocess_smr(...), comuni)}.
 #' @param value Name of the SMR column to map. Default \code{"total_smr"}.
 #' @param breaks Numeric cut points defining the 5 classes. Default
-#'   \code{c(-Inf, 0.5, 0.8, 1.25, 2, Inf)}, straddling 1.0 so the middle class
+#'   \code{c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)}, straddling 1.0 so the middle class
 #'   is the "as expected" band.
 #' @param title,subtitle,caption Plot annotations. Sensible defaults describe an
 #'   indirectly age-sex standardised preventable-mortality map.
@@ -34,18 +34,18 @@
 #' @export
 plot_smr_map <- function(smr,
                          value    = "total_smr",
-                         breaks   = c(-Inf, 0.5, 0.8, 1.25, 2, Inf),
+                         breaks   = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
                          title    = "Preventable mortality by Comune",
                          subtitle = "Indirectly standardised mortality ratio (SMR) for preventable causes",
                          caption  = "SMR = 1 means deaths match the area-wide age-sex expectation.") {
 
-  labels <- c("< 0.50", "0.50 \u2013 0.80", "0.80 \u2013 1.25", "1.25 \u2013 2.00", "> 2.00")
+  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
   pal <- c(
-    "< 0.50"        = "#5a8a7d",  # deep sage  (well below expected)
-    "0.50 \u2013 0.80" = "#a3c4b5",  # soft green
-    "0.80 \u2013 1.25" = "#f2e8d5",  # pale sand  (\u2248 expected)
-    "1.25 \u2013 2.00" = "#dca678",  # warm clay
-    "> 2.00"        = "#b5651d"   # terracotta (well above expected)
+    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
+    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
+    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
+    "1.05 \u2013 1.10" = "#dca678",  # warm clay
+    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
   )
 
   # Ensure a properly registered sf: a table whose geometry is a bare sfc
@@ -101,7 +101,7 @@ plot_smr_map <- function(smr,
 #'   note a bare \code{starts_with("M_")} would also catch the \code{_isr}
 #'   columns).
 #' @param breaks Numeric cut points defining the 5 classes. Default
-#'   \code{c(-Inf, 0.5, 0.8, 1.25, 2, Inf)}, straddling 1.0.
+#'   \code{c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)}, straddling 1.0.
 #' @param strip_prefix,strip_suffix Regular expressions removed from each column
 #'   name to make the facet label. Defaults strip a leading \code{"X_"} prefix
 #'   and a trailing \code{"_smr"}.
@@ -130,7 +130,7 @@ plot_smr_map <- function(smr,
 #' @export
 plot_smr_facets <- function(smr,
                             cols         = dplyr::matches("^M_.*_smr$"),
-                            breaks       = c(-Inf, 0.5, 0.8, 1.25, 2, Inf),
+                            breaks       = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
                             ncol         = 4,
@@ -138,13 +138,13 @@ plot_smr_facets <- function(smr,
                             subtitle = "Indirectly age-sex standardised mortality ratio (SMR); 1 = deaths match the age-sex expectation",
                             caption  = "Each panel standardised on the same age-sex schedule; bins shared across panels.") {
 
-  labels <- c("< 0.50", "0.50 \u2013 0.80", "0.80 \u2013 1.25", "1.25 \u2013 2.00", "> 2.00")
+  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
   pal <- c(
-    "< 0.50"        = "#5a8a7d",
-    "0.50 \u2013 0.80" = "#a3c4b5",
-    "0.80 \u2013 1.25" = "#f2e8d5",
-    "1.25 \u2013 2.00" = "#dca678",
-    "> 2.00"        = "#b5651d"
+    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
+    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
+    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
+    "1.05 \u2013 1.10" = "#dca678",  # warm clay
+    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
   )
 
   smr <- sf::st_as_sf(smr)   # defend against a demoted (non-sf) input
@@ -323,5 +323,66 @@ plot_cmr_isr_facets <- function(cmr, smr,
       plot.title    = ggplot2::element_text(face = "bold"),
       plot.subtitle = ggplot2::element_text(colour = "grey30"),
       strip.text    = ggplot2::element_text(face = "bold")
+    )
+}
+
+#' Standardised mortality rate vs social/material vulnerability scatter
+#'
+#' One point per comune: the overall indirectly standardised mortality rate
+#' (ISR, \emph{not} the SMR ratio) on the x-axis and the ISTAT vulnerability
+#' index (IVSM) on the y-axis. A positive slope indicates that more
+#' vulnerable comuni also carry higher standardised mortality. The ISR comes
+#' from \code{\link{preprocess_smr}} (the \code{total_isr} column by default)
+#' and the IVSM from \code{\link{import_ivsm}}; the two are joined on the shared
+#' \code{comune} key.
+#'
+#' @param smr Standardised table from \code{preprocess_smr()} (one row per
+#'   comune), supplying the standardised rate.
+#' @param ivsm IVSM table from \code{import_ivsm()} (one row per comune).
+#' @param group_var Comune key present in both. Default \code{"comune"}.
+#' @param isr Column in \code{smr} holding the overall standardised rate.
+#'   Default \code{"total_isr"}.
+#' @param ivsm_col Column in \code{ivsm} holding the index. Default \code{"ivsm"}.
+#' @param smooth Logical; add a linear trend line. Default \code{TRUE}.
+#' @param title,subtitle Plot annotations.
+#' @return A \code{ggplot} object.
+#' @importFrom dplyr select all_of inner_join
+#' @importFrom ggplot2 ggplot aes geom_point geom_smooth geom_hline labs
+#'   theme_minimal theme element_text
+#' @importFrom rlang .data
+#' @export
+plot_scatter_smr_ivsm <- function(smr, ivsm,
+                                  group_var = "comune",
+                                  isr       = "total_isr",
+                                  ivsm_col  = "ivsm",
+                                  smooth    = TRUE,
+                                  title     = "Standardised mortality vs social/material vulnerability, by comune",
+                                  subtitle  = "Each point a comune; x = indirectly standardised rate, y = IVSM (national average = 100)") {
+
+  d <- dplyr::inner_join(
+    dplyr::select(smr,  dplyr::all_of(c(group_var, isr)))      |> stats::setNames(c(group_var, "isr")),
+    dplyr::select(ivsm, dplyr::all_of(c(group_var, ivsm_col))) |> stats::setNames(c(group_var, "ivsm")),
+    by = group_var
+  )
+
+  p <- ggplot2::ggplot(d, ggplot2::aes(y = .data[["isr"]], x = .data[["ivsm"]])) +
+    ggplot2::geom_vline(xintercept = 100, linetype = "dashed", colour = "grey70") +
+    ggplot2::geom_point(size = 2.4, alpha = 0.8, colour = "#3b528b")
+
+  if (smooth) {
+    p <- p + ggplot2::geom_smooth(method = "lm", formula = y ~ x,
+                                  se = TRUE, colour = "#b5651d", fill = "#f2e8d5")
+  }
+
+  p +
+    ggplot2::labs(
+      title = title, subtitle = subtitle,
+      y = "Indirectly standardised mortality rate (per 100,000)",
+      x = "IVSM (social & material vulnerability index)"
+    ) +
+    ggplot2::theme_minimal(base_size = 13) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(face = "bold"),
+      plot.subtitle = ggplot2::element_text(colour = "grey30")
     )
 }

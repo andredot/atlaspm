@@ -58,6 +58,12 @@ add_geo <- function(data,
   keep <- match.arg(keep)
   pad  <- function(x) sprintf(paste0("%0", code_width, "d"), as.integer(x))
 
+  # `targets` storage (qs/rds) can strip the sf class on read, leaving a plain
+  # tibble with a bare sfc geometry column - which makes dplyr::mutate() below
+  # fail with "all columns must be vectors / geometry is an sfc object".
+  # Re-promote defensively so the function works regardless of how shp arrived.
+  shp <- sf::st_as_sf(shp)
+
   # normalise both keys to a common padded string under one shared name
   data <- dplyr::mutate(data, .key = pad(.data[[data_key]]))
   shp  <- dplyr::mutate(shp,  .key = pad(.data[[shp_key]]))
@@ -77,4 +83,79 @@ add_geo <- function(data,
   joined |>
     dplyr::select(-".key") |>
     sf::st_as_sf()
+}
+
+#' Attach a standardised covariate to the comune sf, preserving row order
+#'
+#' Left-joins a one-row-per-comune covariate table onto \code{geo}, optionally
+#' imputes any missing values from the mean of contiguous neighbours, and adds a
+#' z-scored copy of the covariate. The left join keeps every row of \code{geo}
+#' in its original order, so the result stays aligned with an adjacency matrix
+#' built from the same \code{geo} (essential for BYM2/ICAR, where C is matched
+#' to the data by position). Imputation keeps all rows, so the adjacency matrix
+#' built from \code{geo} remains valid without rebuilding.
+#'
+#' @param geo The comune \code{sf} (e.g. \code{smr_geo}), defining row order.
+#' @param cov A data frame with the join key and the covariate, one row per
+#'   comune (e.g. \code{ivsm_raw}: \code{comune}, \code{ivsm}).
+#' @param var Name of the covariate column in \code{cov}. Default \code{"ivsm"}.
+#' @param by Join key present in both. Default \code{"comune"}.
+#' @param z_name Name for the standardised column. Default \code{paste0(var, "_z")}.
+#' @param impute_missing If \code{TRUE} (default), comuni with a missing
+#'   covariate have it filled with the mean of their contiguous (queen)
+#'   neighbours' values, computed on \code{geo}'s own geometry. Keeps all rows,
+#'   so the adjacency matrix stays valid. If \code{FALSE}, missing values are
+#'   left as NA (which will break a Stan fit).
+#' @return \code{geo} with the (possibly imputed) raw covariate and its z-scored
+#'   version added, one row per comune in the original order.
+#' @importFrom dplyr select all_of left_join mutate |>
+#' @importFrom sf st_as_sf
+#' @importFrom spdep poly2nb
+#' @importFrom rlang .data :=
+#' @export
+add_covariate <- function(geo, cov, var = "ivsm", by = "comune",
+                          z_name = paste0(var, "_z"),
+                          impute_missing = TRUE) {
+
+  # `targets` storage can strip the sf class on read, leaving a plain tibble
+  # with a bare sfc geometry column - which makes dplyr::mutate() below fail with
+  # "all columns must be vectors / geometry is an sfc object". Re-promote first.
+  geo <- sf::st_as_sf(geo)
+
+  cov1 <- dplyr::select(cov, dplyr::all_of(c(by, var)))
+  out  <- dplyr::left_join(geo, cov1, by = by)
+
+  x       <- out[[var]]
+  missing <- which(is.na(x))
+
+  if (length(missing) > 0) {
+    if (impute_missing) {
+      # contiguity neighbours from the polygons (same definition as the model's
+      # adjacency); fill each NA with the mean of its non-missing neighbours.
+      nb <- spdep::poly2nb(out)
+      filled <- x
+      for (i in missing) {
+        nb_vals <- x[nb[[i]]]
+        filled[i] <- mean(nb_vals, na.rm = TRUE)
+      }
+      still_na <- is.na(filled)
+      if (any(still_na)) {
+        warning(sprintf(
+          "%d comuni still have no '%s' after neighbour imputation (no neighbour had a value); filled with the overall mean instead.",
+          sum(still_na), var), call. = FALSE)
+        filled[still_na] <- mean(x, na.rm = TRUE)
+      }
+      warning(sprintf(
+        "%d comuni had a missing '%s'; imputed from the mean of their contiguous neighbours.",
+        length(missing), var), call. = FALSE)
+      out[[var]] <- filled
+    } else {
+      warning(sprintf(
+        "%d comuni have no '%s' value (left as NA); the Stan fit will error unless handled.",
+        length(missing), var), call. = FALSE)
+    }
+  }
+
+  # z-score AFTER imputation, so all modelled comuni contribute to the scaling
+  dplyr::mutate(out, !!z_name := as.numeric(scale(.data[[var]])))
 }

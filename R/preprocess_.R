@@ -248,7 +248,6 @@ preprocess_cmr <- function(mort_count,
                                 ~ dplyr::coalesce(.x, 0) / .data[["population"]] * per)) |>
     dplyr::rename(!!group_var := ".area")
 }
-
 #' Indirectly standardised mortality table by comune, wide over cause / group / mechanism
 #'
 #' Companion to \code{\link{preprocess_cmr}} that returns indirectly
@@ -298,9 +297,12 @@ preprocess_cmr <- function(mort_count,
 #'
 #' @return A tibble with one row per comune: \code{group_var}, \code{population},
 #'   then for every category two columns \code{<prefix>_<label>_smr} and
-#'   \code{<prefix>_<label>_isr}, plus \code{total_smr} and \code{total_isr}
-#'   over all deaths. SMR is observed/expected; ISR is the SMR scaled by the
-#'   standard population's crude rate for that category.
+#'   \code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
+#'   \code{total_exp} (expected deaths under the standard schedule),
+#'   \code{total_smr} and \code{total_isr} over all deaths. SMR is
+#'   observed/expected; ISR is the SMR scaled by the standard population's crude
+#'   rate for that category. \code{total_obs}/\code{total_exp} are the response
+#'   and offset a Poisson spatial model (e.g. BYM2) needs.
 #'
 #' @examples
 #' \dontrun{
@@ -439,7 +441,10 @@ preprocess_smr <- function(mort_count,
       total_smr = dplyr::if_else(expected > 0, observed / expected, NA_real_),
       total_isr = total_smr * std_crude_tot * per
     ) |>
-    dplyr::select(.area, total_smr, total_isr)
+    # keep observed + expected counts: the Poisson BYM2 needs them as response
+    # and offset (log(E)); they also let downstream code spot unstable areas.
+    dplyr::select(.area, total_obs = "observed", total_exp = "expected",
+                  total_smr, total_isr)
 
   # ---- 4. widen the per-category blocks (smr and isr), join totals + pop ----
   wide_smr <- blocks |>
@@ -459,4 +464,26 @@ preprocess_smr <- function(mort_count,
     dplyr::mutate(dplyr::across(-dplyr::all_of(c(".area", "population")),
                                 ~ dplyr::coalesce(.x, 0))) |>
     dplyr::rename(!!group_var := ".area")
+}
+
+#' Build a binary spatial adjacency matrix from comune geometries
+#'
+#' Thin wrapper around \code{geostan::shape2mat()} that returns the binary
+#' contiguity matrix \code{C} used as the spatial weights in a BYM2/ICAR model.
+#' The row order of \code{C} matches the row order of \code{geo}, so the same
+#' object must be passed to \code{\link{fit_bym2}} as the model data.
+#'
+#' @param geo An \code{sf} of comune polygons, e.g.
+#'   \code{add_geo(preprocess_smr(...), comuni)}.
+#' @return A sparse binary adjacency matrix (\code{"B"} style), one row/column
+#'   per comune, in the row order of \code{geo}.
+#' @examples
+#' \dontrun{
+#' geo <- add_geo(mort_smr, pop_shp, data_key = "comune")
+#' C   <- build_adjacency(geo)
+#' }
+#' @importFrom geostan shape2mat
+#' @export
+build_adjacency <- function(geo) {
+  geostan::shape2mat(geo, style = "B")
 }

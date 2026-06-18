@@ -85,3 +85,93 @@ import_mortality <- function(file_path) {
       )
     )
 }
+
+#' Import the ISTAT social and material vulnerability index (IVSM)
+#'
+#' Reads a municipal IVSM table (ISTAT \emph{8milaCensus} / Ministero
+#' dell'Interno release) and returns one row per municipality, keyed on a
+#' zero-padded 6-digit \code{comune} code so the result joins directly against
+#' the geometry and rate tables produced elsewhere in the package (the same
+#' key convention used by \code{\link{add_geo}} and \code{\link{import_population}}).
+#'
+#' The source file is the ISTAT-distributed IVSM, which summarises municipal
+#' vulnerability through seven elementary indicators spanning the "material"
+#' and "social" dimensions, with the synthetic index expressed relative to a
+#' national average of 100. Only the municipality code and the index value are
+#' retained by default; pass \code{keep_indicators = TRUE} to carry the seven
+#' component indicators through as well.
+#'
+#' The municipality code is read as character and left-padded with zeros to 6
+#' characters via \code{\link{pad}}, so a numeric \code{15002} in the source
+#' becomes \code{"015002"} and matches the \code{PRO_COM_T}-style codes used by
+#' the ISTAT boundary layer. This mirrors the padding done inside
+#' \code{add_geo}, so an IVSM table imported here can be passed straight to
+#' \code{add_geo(ivsm, comuni)} with the default \code{data_key = "comune"}.
+#'
+#' @param path Path to the IVSM file. ISTAT distributes it as a
+#'   semicolon-separated CSV with a decimal comma; both are handled by the
+#'   default \code{\link[readr]{locale}} (\code{"it"}).
+#' @param code_col Name of the municipality-code column in the source file.
+#'   Defaults to \code{"Codice comune"}, matching the population file. Inspect
+#'   the header with \code{readr::read_lines(path, n_max = 1)} if unsure.
+#' @param ivsm_col Name of the IVSM value column in the source file. Defaults
+#'   to \code{"IVSM"}.
+#' @param keep_indicators Logical; if \code{TRUE}, the seven elementary
+#'   indicators are retained alongside the synthetic index. Defaults to
+#'   \code{FALSE} (index only).
+#'
+#' @return A \code{tibble} with one row per municipality: the key column
+#'   \code{comune} (character, 6-digit zero-padded) and \code{ivsm} (numeric).
+#'   When \code{keep_indicators = TRUE}, the component indicator columns are
+#'   appended with cleaned snake_case names.
+#'
+#' @export
+import_ivsm <- function(path,
+                        code_col = "PROCOM",
+                        ivsm_col = "IVSM",
+                        keep_indicators = FALSE) {
+  pad  <- function(x) sprintf(paste0("%0", 6, "d"), as.integer(x))
+  it_locale <- readr::locale(decimal_mark = ",", grouping_mark = ".")
+
+  raw <- readr::read_delim(
+    path,
+    delim = ",",
+    quote = "\"",
+    locale = it_locale,
+    show_col_types = FALSE,
+    col_types = readr::cols(.default = readr::col_character())
+  )
+
+  if (!code_col %in% names(raw)) {
+    stop("Code column '", code_col, "' not found. Columns are: ",
+         paste(names(raw), collapse = ", "), call. = FALSE)
+  }
+  if (!ivsm_col %in% names(raw)) {
+    stop("IVSM column '", ivsm_col, "' not found. Columns are: ",
+         paste(names(raw), collapse = ", "), call. = FALSE)
+  }
+
+  out <- raw |>
+    dplyr::transmute(
+      comune = pad(.data[[code_col]]),
+      ivsm   = readr::parse_number(
+        .data[[ivsm_col]],
+        locale = it_locale
+      )
+    )
+
+  if (keep_indicators) {
+    indicators <- raw |>
+      dplyr::select(-dplyr::all_of(c(code_col, ivsm_col))) |>
+      janitor::clean_names() |>
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::everything(),
+          ~ readr::parse_number(.x, locale = it_locale)
+        )
+      )
+    out <- dplyr::bind_cols(out, indicators)
+  }
+
+  out
+}
