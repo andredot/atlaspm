@@ -487,3 +487,110 @@ preprocess_smr <- function(mort_count,
 build_adjacency <- function(geo) {
   geostan::shape2mat(geo, style = "B")
 }
+
+
+
+#' Population-weighted quintiles
+#'
+#' Assigns each element to one of \code{n} groups so that the groups hold
+#' (approximately) equal shares of total weight \code{w} when ordered by
+#' \code{x}. This reproduces the "quintili di popolazione" used by the Italian
+#' Deprivation Index: cut points fall at equal shares of \emph{population}, not
+#' at equal numbers of areas.
+#'
+#' @param x Numeric vector to rank.
+#' @param w Non-negative weights (e.g. municipal population).
+#' @param n Number of groups. Default 5.
+#' @return Integer vector of group indices (1 = lowest \code{x}).
+#' @export
+wtd_quantile_group <- function(x, w, n = 5) {
+  o    <- order(x)
+  cumw <- cumsum(w[o]) / sum(w[o])
+  g    <- cut(cumw, breaks = c(-Inf, seq_len(n - 1) / n, Inf), labels = FALSE)
+  out  <- integer(length(x))
+  out[o] <- g
+  out
+}
+
+
+#' Build the four-indicator deprivation proxy by municipality
+#'
+#' Aggregates census-section counts to municipality (\code{PROCOM}), forms the
+#' four proxy indicators, standardises each against the \strong{national}
+#' distribution, sums them into a single deprivation score, derives national
+#' population quintiles, and only then filters to the municipalities present in
+#' the mortality data.
+#'
+#' This is the permanent-census \emph{proxy} reformulation of the Italian
+#' Deprivation Index, \strong{not} the validated five-indicator 2011 index. Two
+#' original indicators (non-home-ownership and single-parent family) are absent
+#' from the permanent-census release and are replaced by foreign-population
+#' share; overcrowding is approximated by occupants per dwelling and
+#' unemployment by non-employment. Treat it as a contemporary sensitivity
+#' comparator, not as a newer edition of the same construct.
+#'
+#' Standardisation is national by design: z-scores use the mean and SD across
+#' \emph{every} Italian municipality in \code{census}, so the study-area filter
+#' is applied last and never influences the score or the quintile cut points.
+#' All four indicators are oriented so that a higher value means more
+#' disadvantage, so a plain sum of z-scores is the index.
+#'
+#' @param census Section-level table from \code{\link{import_census_2023}}.
+#' @param mort_raw Mortality table whose \code{mort_col} lists the study
+#'   municipalities to retain.
+#' @param mort_col Municipality-code column in \code{mort_raw}. Default
+#'   \code{"comune_residenza_2023"}. Matched after zero-padding both sides.
+#'
+#' @return A tibble, one row per retained municipality: \code{comune} (6-digit
+#'   key), \code{population}, the four raw indicators, the continuous
+#'   \code{di_score}, and national \code{di_quintile}.
+#' @seealso \code{\link{import_census_2023}}, \code{\link{wtd_quantile_group}}.
+#' @export
+build_deprivation_proxy <- function(census, mort_raw,
+                                    mort_col = "comune_residenza_2023") {
+
+  # 1. aggregate section counts to municipality ------------------------------
+  agg <- census |>
+    dplyr::rename(comune = PROCOM) |>
+    dplyr::group_by(comune) |>
+    dplyr::summarise(dplyr::across(dplyr::everything(),
+                                   ~ sum(.x, na.rm = TRUE)),
+                     .groups = "drop")
+
+  # 2. four proxy indicators (higher = more disadvantage) --------------------
+  pop_1564 <- rowSums(
+    dplyr::select(agg, dplyr::all_of(paste0("P", 17:26))),
+    na.rm = TRUE
+  )
+
+  ind <- agg |>
+    dplyr::mutate(
+      edu_low = (P86 + P87 + P88) / P83,   # low education, pop 9+
+      nonemp  = 1 - P101 / pop_1564,        # non-employment, 15-64
+      foreign = ST1 / P1,                   # foreign-resident share
+      crowd   = P1 / A2                     # occupants per dwelling
+    )
+
+  # 3. national standardisation (across all municipalities) ------------------
+  z <- function(v) (v - mean(v, na.rm = TRUE)) / stats::sd(v, na.rm = TRUE)
+
+  ind <- ind |>
+    dplyr::mutate(
+      di_score = z(edu_low) + z(nonemp) + z(foreign) + z(crowd),
+      # 4. national population quintiles (before any filtering)
+      di_quintile = wtd_quantile_group(di_score, P1)
+    )
+
+  # 5. filter to the mortality study area ------------------------------------
+  keep <- pad(as.character(unique(mort_raw[[mort_col]])))
+
+  matched <- sum(ind$comune %in% keep)
+  message(matched, " of ", length(keep),
+          " study municipalities matched in the census data.")
+
+  ind |>
+    dplyr::filter(.data[["comune"]] %in% keep) |>
+    dplyr::select("comune", population = "P1",
+                  "edu_low", "nonemp", "foreign", "crowd",
+                  "di_score", "di_quintile")
+}

@@ -326,48 +326,66 @@ plot_cmr_isr_facets <- function(cmr, smr,
     )
 }
 
-#' Standardised mortality rate vs social/material vulnerability scatter
+#' Standardised mortality rate vs a vulnerability/deprivation index scatter
 #'
-#' One point per comune: the overall indirectly standardised mortality rate
-#' (ISR, \emph{not} the SMR ratio) on the x-axis and the ISTAT vulnerability
-#' index (IVSM) on the y-axis. A positive slope indicates that more
-#' vulnerable comuni also carry higher standardised mortality. The ISR comes
-#' from \code{\link{preprocess_smr}} (the \code{total_isr} column by default)
-#' and the IVSM from \code{\link{import_ivsm}}; the two are joined on the shared
+#' One point per comune: a contextual index (IVSM, Deprivation Index, ...) on
+#' the x-axis and the overall indirectly standardised mortality rate (ISR,
+#' \emph{not} the SMR ratio) on the y-axis. A positive slope indicates that more
+#' deprived/vulnerable comuni also carry higher standardised mortality. The ISR
+#' comes from \code{\link{preprocess_smr}} (the \code{total_isr} column by
+#' default); the index comes from \code{\link{import_ivsm}} or
+#' \code{\link{build_deprivation_proxy}}. The two are joined on the shared
 #' \code{comune} key.
+#'
+#' The function is index-agnostic: point the \code{index_col} argument at the
+#' relevant column and set \code{ref_line} to the index's natural anchor — 100
+#' for IVSM (national average), 0 for the Deprivation Index (a sum of national
+#' z-scores). Leave \code{ref_line = NULL} to omit the line.
 #'
 #' @param smr Standardised table from \code{preprocess_smr()} (one row per
 #'   comune), supplying the standardised rate.
-#' @param ivsm IVSM table from \code{import_ivsm()} (one row per comune).
+#' @param index Index table (one row per comune) from \code{import_ivsm()} or
+#'   \code{build_deprivation_proxy()}.
 #' @param group_var Comune key present in both. Default \code{"comune"}.
 #' @param isr Column in \code{smr} holding the overall standardised rate.
 #'   Default \code{"total_isr"}.
-#' @param ivsm_col Column in \code{ivsm} holding the index. Default \code{"ivsm"}.
+#' @param index_col Column in \code{index} holding the index value. Default
+#'   \code{"ivsm"}.
+#' @param ref_line Numeric x-position for a dashed vertical reference line, or
+#'   \code{NULL} for none. Default \code{NULL}. Use 100 for IVSM, 0 for the DI.
+#' @param xlab X-axis label. Default a generic index label.
 #' @param smooth Logical; add a linear trend line. Default \code{TRUE}.
 #' @param title,subtitle Plot annotations.
 #' @return A \code{ggplot} object.
 #' @importFrom dplyr select all_of inner_join
-#' @importFrom ggplot2 ggplot aes geom_point geom_smooth geom_hline labs
+#' @importFrom ggplot2 ggplot aes geom_point geom_smooth geom_vline labs
 #'   theme_minimal theme element_text
 #' @importFrom rlang .data
 #' @export
-plot_scatter_smr_ivsm <- function(smr, ivsm,
-                                  group_var = "comune",
-                                  isr       = "total_isr",
-                                  ivsm_col  = "ivsm",
-                                  smooth    = TRUE,
-                                  title     = "Standardised mortality vs social/material vulnerability, by comune",
-                                  subtitle  = "Each point a comune; x = indirectly standardised rate, y = IVSM (national average = 100)") {
+plot_scatter_smr_index <- function(smr, index,
+                                   group_var = "comune",
+                                   isr       = "total_isr",
+                                   index_col = "ivsm",
+                                   ref_line  = NULL,
+                                   xlab      = "Vulnerability / deprivation index",
+                                   smooth    = TRUE,
+                                   title     = "Standardised mortality vs index, by comune",
+                                   subtitle  = "Each point a comune; x = index, y = indirectly standardised rate") {
 
   d <- dplyr::inner_join(
-    dplyr::select(smr,  dplyr::all_of(c(group_var, isr)))      |> stats::setNames(c(group_var, "isr")),
-    dplyr::select(ivsm, dplyr::all_of(c(group_var, ivsm_col))) |> stats::setNames(c(group_var, "ivsm")),
+    dplyr::select(smr,   dplyr::all_of(c(group_var, isr)))       |> stats::setNames(c(group_var, "isr")),
+    dplyr::select(index, dplyr::all_of(c(group_var, index_col))) |> stats::setNames(c(group_var, "index")),
     by = group_var
   )
 
-  p <- ggplot2::ggplot(d, ggplot2::aes(y = .data[["isr"]], x = .data[["ivsm"]])) +
-    ggplot2::geom_vline(xintercept = 100, linetype = "dashed", colour = "grey70") +
-    ggplot2::geom_point(size = 2.4, alpha = 0.8, colour = "#3b528b")
+  p <- ggplot2::ggplot(d, ggplot2::aes(x = .data[["index"]], y = .data[["isr"]]))
+
+  if (!is.null(ref_line)) {
+    p <- p + ggplot2::geom_vline(xintercept = ref_line,
+                                 linetype = "dashed", colour = "grey70")
+  }
+
+  p <- p + ggplot2::geom_point(size = 2.4, alpha = 0.8, colour = "#3b528b")
 
   if (smooth) {
     p <- p + ggplot2::geom_smooth(method = "lm", formula = y ~ x,
@@ -377,8 +395,8 @@ plot_scatter_smr_ivsm <- function(smr, ivsm,
   p +
     ggplot2::labs(
       title = title, subtitle = subtitle,
-      y = "Indirectly standardised mortality rate (per 100,000)",
-      x = "IVSM (social & material vulnerability index)"
+      x = xlab,
+      y = "Indirectly standardised mortality rate (per 100,000)"
     ) +
     ggplot2::theme_minimal(base_size = 13) +
     ggplot2::theme(

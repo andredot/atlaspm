@@ -175,3 +175,66 @@ import_ivsm <- function(path,
 
   out
 }
+
+#' Import 2023 census section data (regional xlsx files)
+#'
+#' Reads the per-region ISTAT 2023 permanent-census section workbooks
+#' (\code{R01_..._2023_sezioni.xlsx} ... \code{R20_..._2023_sezioni.xlsx}) from a
+#' directory and row-binds them into a single national section-level table. Only
+#' the columns needed by \code{\link{build_deprivation_proxy}} are kept, so the
+#' result stays small even though the inputs span ~350,000 census sections.
+#'
+#' The record layout (TRACCIATO) is shared across regions, so one column
+#' selection applies to every file. The TRACCIATO workbook and any other
+#' non-"_sezioni" file in the directory are skipped by the default \code{pattern}.
+#' The municipality national code \code{PROCOM} is read as character and
+#' zero-padded to 6 digits via \code{\link{pad}}, matching the key convention
+#' used elsewhere in the package.
+#'
+#' @param dir Directory containing the regional xlsx files.
+#' @param pattern Regex selecting the regional data files. Default
+#'   \code{"_2023_sezioni\\\\.xlsx$"}, which excludes the TRACCIATO workbook.
+#' @param sheet Worksheet to read from each file (name or index). Default 1.
+#' @param cols Columns to keep. Defaults to the key (\code{PROCOM}) plus the
+#'   counts required to build the proxy: total and 9+ population, low-education
+#'   counts, employed 15-64, the ten 15-64 age bands, foreign residents, and
+#'   occupied dwellings.
+#'
+#' @return A tibble, one row per census section: \code{PROCOM} (character,
+#'   6-digit) and the selected count columns as numeric.
+#' @export
+import_census_2023 <- function(dir,
+                               pattern = "_2023_sezioni\\.xlsx$",
+                               sheet   = 1,
+                               cols    = c("PROCOM",
+                                           "P1", "P83",
+                                           "P86", "P87", "P88",
+                                           "P101",
+                                           paste0("P", 17:26),  # pop 15-64 bands
+                                           "ST1", "A2")) {
+  files <- list.files(dir, pattern = pattern, full.names = TRUE)
+  if (length(files) == 0L) {
+    stop("No files matching '", pattern, "' in ", dir, call. = FALSE)
+  }
+
+  read_one <- function(f) {
+    d <- readxl::read_excel(f, sheet = sheet)
+    missing <- setdiff(cols, names(d))
+    if (length(missing) > 0L) {
+      stop("In ", basename(f), " these columns are absent: ",
+           paste(missing, collapse = ", "), call. = FALSE)
+    }
+    d <- dplyr::select(d, dplyr::all_of(cols))
+    count_cols <- setdiff(cols, "PROCOM")
+    dplyr::mutate(
+      d,
+      PROCOM = pad(as.character(PROCOM)),
+      dplyr::across(dplyr::all_of(count_cols),
+                    ~ suppressWarnings(as.numeric(as.character(.x))))
+    )
+  }
+
+  purrr::map(files, read_one) |>
+    purrr::list_rbind()
+}
+
