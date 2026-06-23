@@ -248,14 +248,17 @@ preprocess_cmr <- function(mort_count,
                                 ~ dplyr::coalesce(.x, 0) / .data[["population"]] * per)) |>
     dplyr::rename(!!group_var := ".area")
 }
+
+
 #' Indirectly standardised mortality table by comune, wide over cause / group / mechanism
 #'
 #' Companion to \code{\link{preprocess_cmr}} that returns indirectly
 #' age-sex-standardised mortality instead of the crude rate. For every area
 #' (comune by default) and every category of each classification - \code{cause}
 #' (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
-#' \code{mechanism} (\code{"M_"}) - it returns two columns: the SMR
-#' (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
+#' \code{mechanism} (\code{"M_"}) - it returns four columns: observed deaths
+#' (\code{<prefix>_<label>_obs}), expected deaths (\code{<prefix>_<label>_exp}),
+#' the SMR (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
 #' standardised rate (\code{<prefix>_<label>_isr}, SMR x the standard crude rate,
 #' per \code{per} residents).
 #'
@@ -270,7 +273,10 @@ preprocess_cmr <- function(mort_count,
 #' Deaths are weighted by \code{weight_col} (50/50 split causes contribute 0.5).
 #' Observed and expected deaths are aggregated on the same weighting, so the SMR
 #' is internally consistent. Every comune present in the population file is
-#' returned; comuni with no deaths get SMR/ISR of 0.
+#' returned; comuni with no deaths get SMR/ISR/observed of 0, but their
+#' \emph{expected} stays positive (it must not be zeroed - a Poisson spatial
+#' model uses \code{log(expected)} as its offset, and \code{log(0)} is
+#' undefined).
 #'
 #' @param mort_count Data frame of deaths, one row per death, containing the
 #'   area column \code{mort_col}, the strata columns \code{age_col} and
@@ -296,13 +302,15 @@ preprocess_cmr <- function(mort_count,
 #' @param per Multiplier for the standardised rate. Default \code{100000}.
 #'
 #' @return A tibble with one row per comune: \code{group_var}, \code{population},
-#'   then for every category two columns \code{<prefix>_<label>_smr} and
+#'   then for every category four columns \code{<prefix>_<label>_obs},
+#'   \code{<prefix>_<label>_exp}, \code{<prefix>_<label>_smr} and
 #'   \code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
 #'   \code{total_exp} (expected deaths under the standard schedule),
 #'   \code{total_smr} and \code{total_isr} over all deaths. SMR is
 #'   observed/expected; ISR is the SMR scaled by the standard population's crude
-#'   rate for that category. \code{total_obs}/\code{total_exp} are the response
-#'   and offset a Poisson spatial model (e.g. BYM2) needs.
+#'   rate for that category. The per-category \code{_obs}/\code{_exp} columns are
+#'   the response and offset a Poisson spatial model (e.g. BYM2) needs to smooth
+#'   each category separately.
 #'
 #' @examples
 #' \dontrun{
@@ -415,7 +423,7 @@ preprocess_smr <- function(mort_count,
         isr      = smr * std_crude * per,
         col      = clean[.lvl]
       ) |>
-      dplyr::select(.area, col, smr, isr)
+      dplyr::select(.area, col, observed, expected, smr, isr)
   })
 
   # ---- 3. add an all-cause "total" block (deaths counted once) ----
@@ -446,7 +454,15 @@ preprocess_smr <- function(mort_count,
     dplyr::select(.area, total_obs = "observed", total_exp = "expected",
                   total_smr, total_isr)
 
-  # ---- 4. widen the per-category blocks (smr and isr), join totals + pop ----
+  # ---- 4. widen the per-category blocks (obs, exp, smr, isr), join totals + pop ----
+  wide_obs <- blocks |>
+    tidyr::pivot_wider(id_cols = ".area", names_from = "col",
+                       values_from = "observed", names_glue = "{col}_obs",
+                       values_fill = 0)          # no death in a cell -> 0 observed: correct
+  wide_exp <- blocks |>
+    tidyr::pivot_wider(id_cols = ".area", names_from = "col",
+                       values_from = "expected", names_glue = "{col}_exp",
+                       values_fill = NA_real_)   # missing expected is NOT 0 -> NA, never log(0)
   wide_smr <- blocks |>
     tidyr::pivot_wider(id_cols = ".area", names_from = "col",
                        values_from = "smr", names_glue = "{col}_smr",
@@ -456,13 +472,21 @@ preprocess_smr <- function(mort_count,
                        values_from = "isr", names_glue = "{col}_isr",
                        values_fill = 0)
 
+  # expected columns must be shielded from the blanket coalesce-to-0 below
+  exp_cols <- grep("_exp$", names(wide_exp), value = TRUE)
+
   pop_total |>
     dplyr::left_join(wide_smr,    by = ".area") |>
     dplyr::left_join(wide_isr,    by = ".area") |>
+    dplyr::left_join(wide_obs,    by = ".area") |>
+    dplyr::left_join(wide_exp,    by = ".area") |>
     dplyr::left_join(total_block, by = ".area") |>
-    # comuni with no deaths: every standardised value is 0
-    dplyr::mutate(dplyr::across(-dplyr::all_of(c(".area", "population")),
-                                ~ dplyr::coalesce(.x, 0))) |>
+    # comuni with no deaths: SMR/ISR/observed are 0, but EXPECTED must stay as-is
+    # (a death-free comune still has positive expected; zeroing it breaks log(E)).
+    dplyr::mutate(dplyr::across(
+      -dplyr::all_of(c(".area", "population", exp_cols)),
+      ~ dplyr::coalesce(.x, 0)
+    )) |>
     dplyr::rename(!!group_var := ".area")
 }
 

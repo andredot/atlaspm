@@ -686,3 +686,145 @@ print.bym2_comparison <- function(x, digits = 3, ...) {
   }
   invisible(x)
 }
+
+#' Fit one BYM2 model per mechanism (or per any set of obs/exp column pairs)
+#'
+#' Loops over the per-mechanism observed/expected column pairs on \code{geo} and
+#' fits a separate \code{\link{fit_bym2}} model to each, reusing the shared
+#' adjacency matrix \code{C} and \code{scale_factor} (both depend only on the
+#' graph, so they are computed once and passed in). Each mechanism is smoothed on
+#' its own indirectly standardised expected counts, so a smoothed RR of 1 means
+#' "matches the region-wide age-sex expectation for that mechanism".
+#' geostan's Poisson response must be integer; split-cause weights (0.5) make
+#' M_*_obs fractional, so it's rounded to the nearest integer and
+#' shift is reported.
+#'
+#' Mechanism "stems" are discovered from the \code{_obs} columns matching
+#' \code{obs_pattern}; for each stem \code{S} the model is
+#' \code{S_obs ~ offset(log(S_exp))}. A stem whose \code{_exp} column contains any
+#' non-positive or \code{NA} value is fatal (the log-offset would be undefined) -
+#' this guards against an upstream \code{values_fill = 0} silently injecting
+#' \code{log(0)} into the offset for death-free comuni.
+#'
+#' @param geo An \code{sf}, one row per comune, in the SAME order as \code{C},
+#'   carrying \code{<stem>_obs} and \code{<stem>_exp} columns.
+#' @param C Binary adjacency matrix from \code{\link{build_adjacency}}.
+#' @param scale_factor BYM2 scaling vector from \code{\link{compute_scale_factor}}
+#'   (graph-only, shared across all mechanisms).
+#' @param obs_pattern Regex selecting the observed-count columns. Default
+#'   \code{"^M_.*_obs$"} (the seven mechanisms).
+#' @param chains,iter,control Passed to \code{\link{fit_bym2}}.
+#' @param ... Further arguments forwarded to \code{\link{fit_bym2}}.
+#' @return A named list of fitted models, one per mechanism stem.
+#' @examples
+#' \dontrun{
+#' fits <- fit_bym2_mechanisms(smr_geo, C_matrix, scale_factor)
+#' check_bym2_fit(fits[["M_screening"]])
+#' }
+#' @importFrom stats as.formula
+#' @export
+fit_bym2_mechanisms <- function(geo, C, scale_factor,
+                                obs_pattern = "^M_.*_obs$",
+                                chains  = 4,
+                                iter    = 4000,
+                                control = list(adapt_delta = 0.97,
+                                               max_treedepth = 12),
+                                ...) {
+
+  obs_cols <- grep(obs_pattern, names(geo), value = TRUE)
+  if (!length(obs_cols)) {
+    stop("No columns matched obs_pattern = '", obs_pattern, "'. ",
+         "Check that preprocess_smr() emits per-mechanism `_obs`/`_exp` columns.",
+         call. = FALSE)
+  }
+  stems <- sub("_obs$", "", obs_cols)
+
+  fits <- vector("list", length(stems))
+  names(fits) <- stems
+
+  for (stem in stems) {
+    oc <- paste0(stem, "_obs")
+    ec <- paste0(stem, "_exp")
+    if (!ec %in% names(geo)) {
+      warning("No expected column '", ec, "' to match '", oc, "'; skipping ",
+              stem, ".", call. = FALSE)
+      next
+    }
+
+    # the offset trap: expected must be strictly positive for every comune
+    E <- geo[[ec]]
+    bad <- is.na(E) | E <= 0
+    if (any(bad)) {
+      stop(sprintf(
+        "Mechanism '%s': %d comuni have expected <= 0 or NA, so log(expected) is undefined.\n  Either this mechanism is too sparse to smooth, or `%s` was filled with 0 upstream\n  (a death-free comune still has POSITIVE expected - it must not be zero-filled).",
+        stem, sum(bad), ec), call. = FALSE)
+    }
+
+    # geostan's Poisson response must be integer; split-cause weights (0.5) make
+    # M_*_obs fractional. Round to the nearest integer and report the shift.
+    y_raw <- geo[[oc]]
+    y_int <- round(y_raw)
+    shift <- sum(abs(y_raw - y_int))
+    if (shift > 0) {
+      message(sprintf("  %s: rounded observed to integer (total absolute shift %.1f deaths over %d comuni).",
+                      stem, shift, sum(y_raw != y_int)))
+    }
+    geo[[oc]] <- y_int
+
+    f <- stats::as.formula(sprintf("%s ~ offset(log(%s))", oc, ec))
+    message("Fitting BYM2 for ", stem, " ...")
+    fits[[stem]] <- fit_bym2(
+      geo, C,
+      formula      = f,
+      scale_factor = scale_factor,
+      obs_col      = oc,
+      exp_col      = ec,
+      chains       = chains,
+      iter         = iter,
+      control      = control,
+      ...
+    )
+  }
+
+  fits[!vapply(fits, is.null, logical(1))]
+}
+
+
+#' Collect per-mechanism smoothed RR (and exceedance) into one wide sf
+#'
+#' Augments \code{geo} with one smoothed-relative-risk column per mechanism,
+#' named \code{<stem><out_suffix>} (default \code{<stem>_bym2}), plus a matching
+#' exceedance column \code{<stem><out_suffix>_exc} = P(RR > \code{threshold}).
+#' The result is shaped exactly like the input to \code{\link{plot_smr_facets}},
+#' so the faceted small-multiples map needs no new plotting code - just point its
+#' \code{cols} at the \code{_bym2} columns.
+#'
+#' @param geo The same \code{sf} passed to \code{\link{fit_bym2_mechanisms}}.
+#' @param fits The named list returned by \code{\link{fit_bym2_mechanisms}}.
+#' @param threshold Relative-risk threshold for the exceedance columns. Default
+#'   \code{1.10}.
+#' @param out_suffix Suffix for the smoothed-RR columns. Default \code{"_bym2"}.
+#' @return \code{geo} with \code{<stem>_bym2} and \code{<stem>_bym2_exc} columns
+#'   added, and the threshold recorded as an attribute.
+#' @examples
+#' \dontrun{
+#' smr_geo_mech_bym2 <- augment_bym2_mechanisms(smr_geo, fits)
+#' plot_smr_facets(smr_geo_mech_bym2,
+#'                 cols   = dplyr::matches("^M_.*_bym2$"),
+#'                 breaks = c(-Inf, 0.90, 0.95, 1.05, 1.10, Inf),
+#'                 strip_suffix = "_bym2$")
+#' }
+#' @export
+augment_bym2_mechanisms <- function(geo, fits,
+                                    threshold  = 1.10,
+                                    out_suffix = "_bym2") {
+  out <- geo
+  for (stem in names(fits)) {
+    ec  <- paste0(stem, "_exp")
+    aug <- augment_bym2(geo, fits[[stem]], exp_col = ec, threshold = threshold)
+    out[[paste0(stem, out_suffix)]]          <- aug[["bym2_rr"]]
+    out[[paste0(stem, out_suffix, "_exc")]]  <- aug[["bym2_exceed"]]
+  }
+  attr(out, "bym2_exceed_threshold") <- threshold
+  out
+}

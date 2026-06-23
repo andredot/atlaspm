@@ -89,6 +89,28 @@ list(
     plot_exceedance_map(smr_geo_bym2)        # label auto-derived from stored threshold
   ),
 
+  ## PER-MECHANISM BYM2 (seven models -> one faceted smoothed map)
+  tar_target(
+    models_mechanism,
+    fit_bym2_mechanisms(smr_geo, C_matrix, scale_factor)   # reuses shared scale_factor
+  ),
+  tar_target(
+    smr_geo_mech_bym2,
+    augment_bym2_mechanisms(smr_geo, models_mechanism, threshold = 1.10)
+  ),
+  tar_target(
+    map_smr_facets_bym2,
+    plot_smr_facets(
+      smr_geo_mech_bym2,
+      cols         = dplyr::matches("^M_.*_bym2$"),
+      breaks       = c(-Inf, 0.90, 0.95, 1.05, 1.10, Inf),
+      strip_suffix = "_bym2$",
+      title    = "BYM2-smoothed preventable mortality by mechanism, by comune",
+      subtitle = "ICAR-smoothed relative risk (model SMR); 1 = matches the age-sex expectation",
+      caption  = "Per-mechanism BYM2 on shared adjacency; bins shared across panels."
+    )
+  ),
+
   ## IVSM
   tar_target(
     model_ivsm,
