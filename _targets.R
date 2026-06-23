@@ -108,7 +108,14 @@ list(
       title    = "BYM2-smoothed preventable mortality by mechanism, by comune",
       subtitle = "ICAR-smoothed relative risk (model SMR); 1 = matches the age-sex expectation",
       caption  = "Per-mechanism BYM2 on shared adjacency; bins shared across panels."
+      # title    = "Mortalità prevenibile per comune, suddivisa per funzione",
+      # subtitle = "Rischio Relativo; 1 = corrisponde a quanto atteso per sesso ed età",
+      # caption  = "BYM2 su matrice di adiacenza; raggruppamento unico per territorio"
     )
+  ),
+  tar_target(
+    map_exceedance_facets_bym2,
+    plot_exceedance_facets(smr_geo_mech_bym2)   # threshold read from the stored attribute
   ),
 
   ## IVSM

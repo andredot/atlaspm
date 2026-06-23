@@ -404,3 +404,251 @@ plot_scatter_smr_index <- function(smr, index,
       plot.subtitle = ggplot2::element_text(colour = "grey30")
     )
 }
+
+#' Strategic prioritisation map from BYM2 exceedance probabilities
+#'
+#' Maps the exceedance-probability column from \code{\link{augment_bym2}} as four
+#' tiers using a calibrated-likelihood lexicon (almost certain / likely /
+#' possible / unlikely), with an earthy palette. The tiers express how strong the
+#' evidence is that an area's relative risk exceeds the threshold - which is what
+#' an exceedance probability measures - rather than the point estimate alone.
+#'
+#' The \code{threshold} here only sets the *label* - the underlying probabilities
+#' were fixed when \code{augment_bym2()} ran. To keep label and data in sync, the
+#' function reads the threshold stored on the \code{sf} by \code{augment_bym2()}
+#' when \code{threshold} is left \code{NULL}, falling back to \code{1.10} with a
+#' message if no stored value is found.
+#'
+#' @param geo An \code{sf} from \code{augment_bym2()} with an exceedance column.
+#' @param value Name of the exceedance-probability column. Default
+#'   \code{"bym2_exceed"}.
+#' @param threshold Relative-risk threshold used for the label. \code{NULL}
+#'   (default) reads the value recorded by \code{augment_bym2()}.
+#' @param title,subtitle Plot annotations. \code{subtitle = NULL} is built from
+#'   the threshold.
+#' @param threshold_label Optional manual override of the threshold text.
+#' @param legend_title Legend heading. Default
+#'   \code{"Evidence of excess mortality"}.
+#' @return A \code{ggplot} object.
+#' @importFrom dplyr mutate case_when
+#' @importFrom sf st_as_sf
+#' @importFrom stats setNames
+#' @importFrom ggplot2 ggplot aes geom_sf scale_fill_manual labs theme_void
+#'   theme element_text margin unit
+#' @importFrom rlang .data
+#' @export
+plot_exceedance_map <- function(geo,
+                                value           = "bym2_exceed",
+                                threshold       = NULL,
+                                title           = "Strategic prioritisation map",
+                                subtitle        = NULL,
+                                threshold_label = NULL,
+                                legend_title    = "Evidence of excess mortality") {
+
+  # resolve the threshold: explicit arg > attribute from augment_bym2() > 1.10
+  if (is.null(threshold)) {
+    threshold <- attr(geo, "bym2_exceed_threshold")
+    if (is.null(threshold)) {
+      threshold <- 1.10
+      message("No `threshold` supplied or stored on `geo`; labelling as RR > 1.10. ",
+              "Pass `threshold` to match the value used in augment_bym2().")
+    }
+  }
+  if (is.null(threshold_label)) {
+    pct <- round((threshold - 1) * 100)
+    threshold_label <- sprintf("+%d%% (RR > %.2f)", pct, threshold)
+  }
+  if (is.null(subtitle)) {
+    subtitle <- paste0("Probability that preventable mortality exceeds ", threshold_label)
+  }
+
+  # labels defined ONCE, worst-to-best; palette derives from them so the two
+  # can never drift out of sync (the bug that drops a tier to grey)
+  tier_labels <- c(
+    "Almost certain (\u2265 95%)",
+    "Likely (80\u201395%)",
+    "Possible (50\u201380%)",
+    "Unlikely (< 50%)"
+  )
+  pal <- stats::setNames(
+    c("#8c2d04",   # burnt umber
+      "#d94801",   # terracotta
+      "#fdb863",   # ochre
+      "#eaeaea"),  # light stone
+    tier_labels
+  )
+
+  geo <- sf::st_as_sf(geo) |>
+    dplyr::mutate(
+      .tier = factor(
+        dplyr::case_when(
+          .data[[value]] >= 0.95 ~ tier_labels[1],
+          .data[[value]] >= 0.80 ~ tier_labels[2],
+          .data[[value]] >= 0.50 ~ tier_labels[3],
+          TRUE                   ~ tier_labels[4]
+        ),
+        levels = tier_labels
+      )
+    )
+
+  ggplot2::ggplot(geo) +
+    ggplot2::geom_sf(ggplot2::aes(fill = .data[[".tier"]]), colour = NA) +
+    ggplot2::scale_fill_manual(values = pal, drop = FALSE, name = legend_title) +
+    ggplot2::labs(title = title, subtitle = subtitle) +
+    ggplot2::theme_void(base_size = 13) +
+    ggplot2::theme(
+      plot.title      = ggplot2::element_text(face = "bold", size = 15,
+                                              margin = ggplot2::margin(b = 4)),
+      plot.subtitle   = ggplot2::element_text(colour = "grey30",
+                                              margin = ggplot2::margin(b = 10)),
+      legend.position = "right",
+      legend.key.size = ggplot2::unit(0.9, "lines"),
+      plot.margin     = ggplot2::margin(12, 12, 12, 12)
+    )
+}
+
+#' Faceted strategic-prioritisation map from per-mechanism exceedance probabilities
+#'
+#' The small-multiples counterpart to \code{\link{plot_exceedance_map}}: instead
+#' of one panel for a single \code{bym2_exceed} column, it facets over the
+#' per-mechanism exceedance columns produced by
+#' \code{\link{augment_bym2_mechanisms}} (named \code{<stem>_bym2_exc}). Each
+#' panel bins its comuni into the same four calibrated-likelihood tiers
+#' (almost certain / likely / possible / unlikely) on a shared palette and a
+#' single legend, so the mechanisms are directly comparable by how strong the
+#' evidence of excess mortality is.
+#'
+#' Columns are selected with a \code{tidyselect} expression (\code{cols}); facet
+#' titles are the column names with the prefix and the \code{_bym2_exc} suffix
+#' stripped and underscores turned to spaces.
+#'
+#' @param geo An \code{sf} from \code{\link{augment_bym2_mechanisms}} carrying
+#'   the \code{<stem>_bym2_exc} columns.
+#' @param cols A \code{tidyselect} expression choosing the exceedance columns.
+#'   Default \code{dplyr::matches("^M_.*_bym2_exc$")} (the seven mechanisms).
+#' @param threshold Relative-risk threshold the probabilities refer to. Default
+#'   \code{NULL} reads the value stored by \code{augment_bym2_mechanisms()},
+#'   falling back to \code{1.10}.
+#' @param strip_prefix,strip_suffix Regexes removed from each column name to make
+#'   the facet label. Defaults strip a leading \code{"M_"} and a trailing
+#'   \code{"_bym2_exc"}.
+#' @param ncol Number of facet columns. Default \code{4} (seven panels -> two
+#'   rows).
+#' @param title,subtitle,caption Plot annotations. \code{subtitle = NULL} is
+#'   built from the threshold.
+#' @param threshold_label Optional manual override of the threshold text.
+#' @param legend_title Legend heading. Default
+#'   \code{"Evidence of excess mortality"}.
+#' @return A \code{ggplot} object.
+#' @examples
+#' \dontrun{
+#' plot_exceedance_facets(smr_geo_mech_bym2)
+#' }
+#' @importFrom dplyr select all_of mutate matches row_number left_join |>
+#' @importFrom tidyr pivot_longer
+#' @importFrom tibble tibble
+#' @importFrom sf st_as_sf st_drop_geometry st_geometry
+#' @importFrom stringr str_remove str_replace_all
+#' @importFrom stats setNames
+#' @importFrom ggplot2 ggplot aes geom_sf scale_fill_manual labs facet_wrap
+#'   theme_void theme element_text margin unit
+#' @importFrom rlang .data
+#' @export
+plot_exceedance_facets <- function(geo,
+                                   cols            = dplyr::matches("^M_.*_bym2_exc$"),
+                                   threshold       = NULL,
+                                   strip_prefix    = "^M_",
+                                   strip_suffix    = "_bym2_exc$",
+                                   ncol            = 4,
+                                   title    = "Strategic prioritisation map by mechanism, by comune",
+                                   subtitle = NULL,
+                                   caption  = "Per-mechanism BYM2 exceedance probabilities; tiers shared across panels.",
+                                   threshold_label = NULL,
+                                   legend_title    = "Evidence of excess mortality") {
+
+  # resolve the threshold: explicit arg > attribute > 1.10
+  if (is.null(threshold)) {
+    threshold <- attr(geo, "bym2_exceed_threshold")
+    if (is.null(threshold)) {
+      threshold <- 1.10
+      message("No `threshold` supplied or stored on `geo`; labelling as RR > 1.10.")
+    }
+  }
+  if (is.null(threshold_label)) {
+    pct <- round((threshold - 1) * 100)
+    threshold_label <- sprintf("+%d%% (RR > %.2f)", pct, threshold)
+  }
+  if (is.null(subtitle)) {
+    subtitle <- paste0("Probability that preventable mortality exceeds ", threshold_label)
+  }
+
+  # tiers defined ONCE, worst-to-best; palette derives from them
+  tier_labels <- c(
+    "Almost certain (\u2265 95%)",
+    "Likely (80\u201395%)",
+    "Possible (50\u201380%)",
+    "Unlikely (< 50%)"
+  )
+  pal <- stats::setNames(
+    c("#8c2d04", "#d94801", "#fdb863", "#eaeaea"),
+    tier_labels
+  )
+
+  geo <- sf::st_as_sf(geo)   # defend against a demoted (non-sf) input
+
+  # Reshaping an sf directly trips "column `geometry` is an sfc object", so pivot
+  # the PLAIN attribute table long, then re-attach one geometry copy per comune
+  # by row index (geometry is identical across every mechanism panel).
+  geom_col <- attr(geo, "sf_column")
+  geo_idx  <- dplyr::mutate(geo, .row = dplyr::row_number())
+
+  attr_long <- sf::st_drop_geometry(geo_idx) |>
+    dplyr::select(.row, !!cols) |>
+    tidyr::pivot_longer(
+      cols      = -.row,
+      names_to  = "mechanism",
+      values_to = ".exceed"
+    ) |>
+    dplyr::mutate(
+      mechanism = stringr::str_replace_all(
+        stringr::str_remove(stringr::str_remove(mechanism, strip_prefix),
+                            strip_suffix),
+        "_", " "),
+      .tier = factor(
+        dplyr::case_when(
+          .exceed >= 0.95 ~ tier_labels[1],
+          .exceed >= 0.80 ~ tier_labels[2],
+          .exceed >= 0.50 ~ tier_labels[3],
+          TRUE            ~ tier_labels[4]
+        ),
+        levels = tier_labels
+      )
+    )
+
+  # one geometry per comune, keyed by the same row index
+  geo_lookup <- tibble::tibble(.row = geo_idx$.row)
+  geo_lookup[[geom_col]] <- sf::st_geometry(geo)
+
+  plot_df <- attr_long |>
+    dplyr::left_join(geo_lookup, by = ".row") |>
+    sf::st_as_sf(sf_column_name = geom_col)
+
+  ggplot2::ggplot(plot_df) +
+    ggplot2::geom_sf(ggplot2::aes(fill = .data[[".tier"]]), colour = NA) +
+    ggplot2::scale_fill_manual(values = pal, drop = FALSE, name = legend_title) +
+    ggplot2::facet_wrap(~ mechanism, ncol = ncol) +
+    ggplot2::labs(title = title, subtitle = subtitle, caption = caption) +
+    ggplot2::theme_void(base_size = 13) +
+    ggplot2::theme(
+      plot.title      = ggplot2::element_text(face = "bold", size = 15,
+                                              margin = ggplot2::margin(b = 4)),
+      plot.subtitle   = ggplot2::element_text(colour = "grey30",
+                                              margin = ggplot2::margin(b = 10)),
+      plot.caption    = ggplot2::element_text(colour = "grey45", size = 9, hjust = 0),
+      strip.text      = ggplot2::element_text(face = "bold", size = 11,
+                                              margin = ggplot2::margin(b = 4)),
+      legend.position = "right",
+      legend.key.size = ggplot2::unit(0.9, "lines"),
+      plot.margin     = ggplot2::margin(12, 12, 12, 12)
+    )
+}
