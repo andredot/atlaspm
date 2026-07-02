@@ -7,7 +7,7 @@
 plot_smr_facets(
   smr,
   cols = dplyr::matches("^M_.*_smr$"),
-  breaks = c(-Inf, 0.5, 0.8, 1.25, 2, Inf),
+  breaks = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
   strip_prefix = "^[A-Z]_",
   strip_suffix = "_smr$",
   ncol = 4,
@@ -28,7 +28,7 @@ note a bare \code{starts_with("M_")} would also catch the \code{_isr}
 columns).}
 
 \item{breaks}{Numeric cut points defining the 5 classes. Default
-\code{c(-Inf, 0.5, 0.8, 1.25, 2, Inf)}, straddling 1.0.}
+\code{c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)}, straddling 1.0.}
 
 \item{strip_prefix, strip_suffix}{Regular expressions removed from each column
 name to make the facet label. Defaults strip a leading \code{"X_"} prefix

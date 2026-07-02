@@ -51,21 +51,24 @@ record as one death. Default \code{"weight"}.}
 }
 \value{
 A tibble with one row per comune: \code{group_var}, \code{population},
-then for every category two columns \code{<prefix>_<label>_smr} and
+then for every category four columns \code{<prefix>_<label>_obs},
+\code{<prefix>_<label>_exp}, \code{<prefix>_<label>_smr} and
 \code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
 \code{total_exp} (expected deaths under the standard schedule),
 \code{total_smr} and \code{total_isr} over all deaths. SMR is
 observed/expected; ISR is the SMR scaled by the standard population's crude
-rate for that category. \code{total_obs}/\code{total_exp} are the response
-and offset a Poisson spatial model (e.g. BYM2) needs.
+rate for that category. The per-category \code{_obs}/\code{_exp} columns are
+the response and offset a Poisson spatial model (e.g. BYM2) needs to smooth
+each category separately.
 }
 \description{
 Companion to \code{\link{preprocess_cmr}} that returns indirectly
 age-sex-standardised mortality instead of the crude rate. For every area
 (comune by default) and every category of each classification - \code{cause}
 (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
-\code{mechanism} (\code{"M_"}) - it returns two columns: the SMR
-(\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
+\code{mechanism} (\code{"M_"}) - it returns four columns: observed deaths
+(\code{<prefix>_<label>_obs}), expected deaths (\code{<prefix>_<label>_exp}),
+the SMR (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
 standardised rate (\code{<prefix>_<label>_isr}, SMR x the standard crude rate,
 per \code{per} residents).
 }
@@ -81,7 +84,10 @@ age (\code{eta} / \code{Eta}) crossed with sex (\code{sesso}).
 Deaths are weighted by \code{weight_col} (50/50 split causes contribute 0.5).
 Observed and expected deaths are aggregated on the same weighting, so the SMR
 is internally consistent. Every comune present in the population file is
-returned; comuni with no deaths get SMR/ISR of 0.
+returned; comuni with no deaths get SMR/ISR/observed of 0, but their
+\emph{expected} stays positive (it must not be zeroed - a Poisson spatial
+model uses \code{log(expected)} as its offset, and \code{log(0)} is
+undefined).
 }
 \examples{
 \dontrun{

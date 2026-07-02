@@ -123,7 +123,7 @@ preprocess_mortality <- function(mort_raw,
 #' \code{pop_year} (default 2023) is kept and \code{numero} is summed over all
 #' ages and both sexes to give one population figure per comune. The population
 #' \code{Codice comune} is matched to \code{mort_col} in \code{mort_count}
-#' (default \code{"comune_residenza_2023"}).
+#' (default \code{"comune_residenza"}).
 #'
 #' Every comune present in the population file is returned; comuni with no
 #' deaths get 0 in every rate column.
@@ -138,7 +138,7 @@ preprocess_mortality <- function(mort_raw,
 #' @param group_var Name to give the area key in the output. Default
 #'   \code{"comune"}.
 #' @param mort_col Name of the comune column in \code{mort_count} that matches
-#'   the population \code{Codice comune}. Default \code{"comune_residenza_2023"}.
+#'   the population \code{Codice comune}. Default \code{"comune_residenza"}.
 #' @param class_vars Named character vector mapping classification columns in
 #'   \code{mort_count} to their output column prefix. Default
 #'   \code{c(cause = "C", group = "G", mechanism = "M")}.
@@ -179,7 +179,7 @@ preprocess_mortality <- function(mort_raw,
 preprocess_cmr <- function(mort_count,
                            population,
                            group_var  = "comune",
-                           mort_col   = "comune_residenza_2023",
+                           mort_col   = "comune_residenza",
                            class_vars = c(cause = "C", group = "G", mechanism = "M"),
                            pop_year   = 2023,
                            weight_col = "weight",
@@ -289,7 +289,7 @@ preprocess_cmr <- function(mort_count,
 #' @param group_var Name to give the area key in the output. Default
 #'   \code{"comune"}.
 #' @param mort_col Comune column in \code{mort_count} matching the population
-#'   \code{Codice comune}. Default \code{"comune_residenza_2023"}.
+#'   \code{Codice comune}. Default \code{"comune_residenza"}.
 #' @param age_col,sex_col Age (single year) and sex columns in \code{mort_count}.
 #'   Defaults \code{"eta"} and \code{"sesso"}. They are matched to \code{Eta}
 #'   and \code{sesso} in the population file.
@@ -329,7 +329,7 @@ preprocess_cmr <- function(mort_count,
 preprocess_smr <- function(mort_count,
                            population,
                            group_var  = "comune",
-                           mort_col   = "comune_residenza_2023",
+                           mort_col   = "comune_residenza",
                            age_col    = "eta",
                            sex_col    = "sesso",
                            class_vars = c(cause = "C", group = "G", mechanism = "M"),
@@ -563,7 +563,7 @@ wtd_quantile_group <- function(x, w, n = 5) {
 #' @param mort_raw Mortality table whose \code{mort_col} lists the study
 #'   municipalities to retain.
 #' @param mort_col Municipality-code column in \code{mort_raw}. Default
-#'   \code{"comune_residenza_2023"}. Matched after zero-padding both sides.
+#'   \code{"comune_residenza"}. Matched after zero-padding both sides.
 #'
 #' @return A tibble, one row per retained municipality: \code{comune} (6-digit
 #'   key), \code{population}, the four raw indicators, the continuous
@@ -571,7 +571,7 @@ wtd_quantile_group <- function(x, w, n = 5) {
 #' @seealso \code{\link{import_census_2023}}, \code{\link{wtd_quantile_group}}.
 #' @export
 build_deprivation_proxy <- function(census, mort_raw,
-                                    mort_col = "comune_residenza_2023") {
+                                    mort_col = "comune_residenza") {
 
   # 1. aggregate section counts to municipality ------------------------------
   agg <- census |>

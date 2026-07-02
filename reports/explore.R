@@ -28,7 +28,7 @@ library(janitor)
 #    'Ischaemic heart diseases' carries weight 0.5 (a 50/50 split cause).
 # ---------------------------------------------------------------------
 mort_count <- tibble::tribble(
-  ~comune_residenza_2023, ~sesso, ~eta, ~cause,                      ~group,                                 ~mechanism,                      ~weight,
+  ~comune_residenza, ~sesso, ~eta, ~cause,                      ~group,                                 ~mechanism,                      ~weight,
   "15002", 2L, 35L, "Lung cancer",              "Cancer",                             "Lifestyle and NCDs",           1.0,
   "15002", 1L, 67L, "Ischaemic heart diseases", "Diseases of the circulatory system", "Lifestyle and NCDs",           0.5,
   "15002", 1L, 57L, "Lung cancer",              "Cancer",                             "Lifestyle and NCDs",           1.0,
@@ -271,5 +271,26 @@ lw <- spdep::mat2listw(as(C_matrix, "matrix") * 1, style = "W")  # *1 turns logi
 spdep::moran.mc(lrr, lw, nsim = 9999, zero.policy = TRUE)
 
 # After fit
-spdep::moran.mc(smr_geo_bym2$bym2_rr, lw, nsim = 999, zero.policy = TRUE)
+spdep::moran.mc(smr_geo_bym2$bym2_rr, lw, nsim = 9999, zero.policy = TRUE)
 geostan::moran_plot( sf::st_drop_geometry(smr_geo_bym2)$bym2_rr, C_matrix)          # visual + the I in the title
+
+
+# =====================================================================
+# Per slide
+# =====================================================================
+
+
+tar_read(map_smr_bym2)
+tar_read(map_exceedance)
+tar_read(map_smr_facets_bym2)
+tar_read(map_exceedance_facets_bym2)
+tar_read(map_smr_ivsm)
+tar_read(map_exceedance_ivsm)
+tar_read(map_smr_di)
+tar_read(map_exceedance_di)
+tar_read(scatter_cmr_isr_overall)
+tar_read(scatter_cmr_isr_mechanism)
+tar_read(scatter_smr_ivsm)
+tar_read(scatter_smr_di)
+tar_read(map_smr_overall)
+tar_read(map_smr_mechanism)
