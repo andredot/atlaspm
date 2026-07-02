@@ -10,7 +10,7 @@ PROJ_URL="https://github.com/andredot/atlaspm"
 
 # Shared folders local locations
 # PATH should be a proper path (C:\\...)
-PRJ_SHARED_PATH="C:\Users\andre\Documents\MPH Final Project"
+PRJ_SHARED_PATH="C:\Users\apedot\ATS Milano\Buzzoni Carlotta - Pedot_Andrea"
 # FOLDER shoud be only the name on the folder (and not the full path to that folder)
 INPUT_DATA_FOLDER="data-raw"
 OUTPUT_DATA_FOLDER="output"

@@ -7,7 +7,7 @@
 plot_smr_map(
   smr,
   value = "total_smr",
-  breaks = c(-Inf, 0.5, 0.8, 1.25, 2, Inf),
+  breaks = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
   title = "Preventable mortality by Comune",
   subtitle = "Indirectly standardised mortality ratio (SMR) for preventable causes",
   caption = "SMR = 1 means deaths match the area-wide age-sex expectation."
@@ -20,7 +20,7 @@ column, e.g. \code{add_geo(preprocess_smr(...), comuni)}.}
 \item{value}{Name of the SMR column to map. Default \code{"total_smr"}.}
 
 \item{breaks}{Numeric cut points defining the 5 classes. Default
-\code{c(-Inf, 0.5, 0.8, 1.25, 2, Inf)}, straddling 1.0 so the middle class
+\code{c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)}, straddling 1.0 so the middle class
 is the "as expected" band.}
 
 \item{title, subtitle, caption}{Plot annotations. Sensible defaults describe an

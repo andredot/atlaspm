@@ -36,7 +36,7 @@ list(
                sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
 
   # IMPORT
-  tar_target(mort_path, get_input_data_path("mort_2023.csv")),
+  tar_target(mort_path, get_input_data_path("mort.csv")),
   tar_target(mort_raw, import_mortality(mort_path)),
   tar_target(ivsm_path, get_input_data_path("Indicatori_Regione_Lombardia.csv")),
   tar_target(ivsm_raw, import_ivsm(ivsm_path)),

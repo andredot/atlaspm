@@ -11,6 +11,7 @@ Imports:
     geostan,
     gtsummary,
     janitor,
+    plotly,
     purrr,
     quarto,
     readr,

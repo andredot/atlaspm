@@ -33,7 +33,7 @@ This report describes `mort_count`, the output of
 `preprocess_mortality()`.
 
 It assumes **one row per death**, with the columns `sex`,
-`area_residenza`, `asst_2023`, `eta` (age in years), `group` (cause
+`area_residenza`, `asst`, `eta` (age in years), `group` (cause
 group) and `cause` (specific cause). If your file is instead
 pre-aggregated with a count column `n`, expand it once with
 `mort_count <- tidyr::uncount(mort_count, n)` and everything below works
@@ -69,14 +69,14 @@ mort_count |>
   labs(title = "Deaths by area of residence (top 25)", x = "Deaths", y = NULL)
 ```
 
-## ASST (2023)
+## ASST (2022-2024)
 
 ```{r}
 #| label: uni-asst
 #| fig-height: 7
-ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst_2023)))) +
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst)))) +
   geom_bar(fill = "#3b528b") +
-  labs(title = "Deaths by ASST (2023)", x = "Deaths", y = NULL)
+  labs(title = "Deaths by ASST (2022-2024)", x = "Deaths", y = NULL)
 ```
 
 ## Age at death
@@ -138,12 +138,12 @@ deaths. Counts and column percentages are shown for each level.
 ```{r}
 #| label: uni-table1
 mort_count |>
-  select(sesso, asst_2023, group, cause, mechanism) |>
+  select(sesso, asst, group, cause, mechanism) |>
   mutate(cause = fct_lump_n(cause, 15)) |>
   tbl_summary(
     label = list(
       sesso     ~ "Sex",
-      asst_2023 ~ "ASST (2023)",
+      asst ~ "ASST (2022-2024)",
       group     ~ "Cause group",
       cause     ~ "Cause",
       mechanism ~ "Mechanism"
@@ -163,7 +163,7 @@ comparable across areas of different size.
 ```{r}
 #| label: bi-asst-group
 #| fig-height: 7
-ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst_2023)), fill = group)) +
+ggplot(mort_count, aes(y = fct_rev(fct_infreq(asst)), fill = group)) +
   geom_bar(position = "fill") +
   scale_x_continuous(labels = scales::percent) +
   pal_fill() +

@@ -10,7 +10,7 @@ augment_bym2(
   exp_col = "total_exp",
   pop_col = "population",
   per = 1e+05,
-  threshold = 1
+  threshold = 1.1
 )
 }
 \arguments{
@@ -21,13 +21,16 @@ augment_bym2(
 \item{exp_col, pop_col}{Names of the expected-count and population columns in
 \code{geo}. Defaults \code{"total_exp"}, \code{"population"}.}
 
-\item{per}{Rate multiplier for \code{bym2_isr}. Default \code{100000}.}
+\item{per}{Rate multiplier for \code{bym2_isr}. Default \code{100000}. Affects
+\code{bym2_isr} only.}
 
 \item{threshold}{Relative-risk threshold for the exceedance probability.
-Default \code{1} (more deaths than expected).}
+Default \code{1.10} (a +10\\% excess in mortality). Affects \code{bym2_exceed}
+only.}
 }
 \value{
-\code{geo} with the three \code{bym2_*} columns added.
+\code{geo} with the three \code{bym2_*} columns added and the
+threshold recorded as an attribute.
 }
 \description{
 Pulls the posterior fitted values from a \code{\link{fit_bym2}} model and adds
@@ -37,15 +40,20 @@ three columns to the geometry table:
 \item \code{bym2_isr} - smoothed indirectly standardised rate, i.e. the
 posterior mean fitted deaths divided by population, per \code{per};
 \item \code{bym2_exceed} - exceedance probability P(RR > \code{threshold}),
-the share of posterior draws above the threshold (1 by default).
+the share of posterior draws above the threshold.
 }
+The \code{threshold} used is also stored as an attribute
+(\code{"bym2_exceed_threshold"}) on the returned object so that
+\code{\link{plot_exceedance_map}} can label the map consistently without you
+restating it.
+}
+\details{
 Row order of \code{fit} and \code{geo} must match (both came from the same
 \code{sf}); no join is done, columns are bound by position.
 }
 \examples{
 \dontrun{
-geo2 <- augment_bym2(geo, fit)
-plot_smr_map(geo2, value = "bym2_isr",
-             title = "BYM2-smoothed preventable mortality")
+geo2 <- augment_bym2(geo, fit)                 # P(RR > 1.10)
+plot_exceedance_map(geo2, value = "bym2_isr")
 }
 }

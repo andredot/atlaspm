@@ -2,28 +2,37 @@
 % Please edit documentation in R/model.R
 \name{fit_bym2}
 \alias{fit_bym2}
-\title{Fit a BYM2 (ICAR) spatial model to standardised mortality}
+\title{Fit a (properly scaled) BYM2 spatial model to standardised mortality}
 \usage{
 fit_bym2(
   geo,
   C,
   formula = total_obs ~ offset(log(total_exp)),
+  ME = NULL,
+  scale_factor = NULL,
   obs_col = "total_obs",
   exp_col = "total_exp",
   chains = 4,
   iter = 4000,
+  control = list(adapt_delta = 0.97, max_treedepth = 12),
   ...
 )
 }
 \arguments{
-\item{geo}{An \code{sf} with one row per comune containing the observed-count
-and expected-count columns (\code{obs_col}, \code{exp_col}), in the same
-order as \code{C}.}
+\item{geo}{An \code{sf} with one row per comune containing the observed- and
+expected-count columns (\code{obs_col}, \code{exp_col}), in the same order
+as \code{C}.}
 
 \item{C}{Binary adjacency matrix from \code{\link{build_adjacency}}.}
 
 \item{formula}{Model formula. Default
 \code{total_obs ~ offset(log(total_exp))} - intercept + spatial effect only.}
+
+\item{ME}{Optional measurement-error specification from
+\code{geostan::prep_me_data()}; \code{NULL} (default) for none.}
+
+\item{scale_factor}{BYM2 scaling vector. If \code{NULL} (the explicit default
+marker) it is computed from \code{C} via \code{\link{compute_scale_factor}}.}
 
 \item{obs_col, exp_col}{Names of the observed- and expected-count columns,
 used only to guard against zero/NA expected. Defaults \code{"total_obs"},
@@ -32,26 +41,62 @@ used only to guard against zero/NA expected. Defaults \code{"total_obs"},
 \item{chains, iter}{Sampler settings passed to \code{stan_icar}. Defaults
 \code{4} and \code{4000}.}
 
+\item{control}{List of Stan control parameters. Default
+\code{list(adapt_delta = 0.97, max_treedepth = 12)}.}
+
 \item{...}{Further arguments forwarded to \code{geostan::stan_icar()}
-(e.g. \code{prior}, \code{control}, \code{refresh}).}
+(e.g. \code{prior}, \code{slx}, \code{re}, \code{censor_point},
+\code{refresh}). Do NOT pass \code{slim = TRUE} or \code{drop} the
+\code{"fitted"} quantities - \code{\link{augment_bym2}} needs them.}
 }
 \value{
 A fitted \code{geostan} model object (\code{stanfit} wrapper).
 }
 \description{
 Fits a Poisson \code{geostan::stan_icar} model with \code{type = "bym2"} to
-smooth the comune-level mortality relative risk. The response is the observed
+smooth comune-level mortality relative risk. The response is the observed
 death count and the offset is \code{log(expected)}, so the latent quantity is
-the relative risk RR = observed / expected on the smoothed scale (i.e. a
-model-based SMR). This base model has no covariates - just the spatial random
-effect; covariates (IVSM, etc.) can be added later via \code{formula}.
+the relative risk RR = observed / expected on the smoothed scale (a model-based
+SMR). The base model has only the spatial random effect; covariates (IVSM,
+etc.) can be added via \code{formula}.
 }
 \details{
+Differences from a bare \code{stan_icar} call, all of which affect the output:
+\itemize{
+\item \strong{Scaling.} If \code{scale_factor} is not supplied it is computed
+with \code{\link{compute_scale_factor}}, so this is a \emph{true}
+BYM2 in which \code{rho} is the share of spatially-structured variance and
+priors are graph-portable. Pass \code{scale_factor = NULL} explicitly only
+if you understand you are then fitting an unscaled model.
+\item \strong{Measurement error.} \code{ME} is forwarded to \code{stan_icar}.
+When a covariate is modelled with error, \code{stan_icar} treats the
+observed covariate as a noisy reading of a latent true value and estimates
+\code{beta} on that latent value, so the covariate's uncertainty
+propagates into \code{beta} (and hence into the adjusted RR) instead of
+being ignored. Build \code{ME} with \code{geostan::prep_me_data()}; the
+column names in its \code{se} data frame must match the covariate names in
+\code{formula}.
+\item \strong{Sampler tuning.} \code{control} defaults to a higher
+\code{adapt_delta} and \code{max_treedepth} because BYM2's funnel geometry
+(the \code{spatial_scale}-by-\code{phi} interaction) routinely produces
+divergent transitions at Stan's defaults. Divergences bias the posterior
+and especially the tail-sensitive exceedance probabilities, so always run
+\code{\link{check_bym2_fit}} afterwards.
+}
+
 \code{geo} and \code{C} must be in the same row order (both built from the
 same \code{sf}); \code{\link{build_adjacency}} guarantees this.
 }
 \examples{
 \dontrun{
+# base spatial-only model (scale factor computed automatically)
 fit <- fit_bym2(geo, C)
+
+# with IVSM measured with error, so its uncertainty enters beta
+ME  <- geostan::prep_me_data(se = data.frame(IVSM = geo$IVSM_se))
+fit <- fit_bym2(geo, C,
+                formula = total_obs ~ offset(log(total_exp)) + IVSM,
+                ME = ME)
+check_bym2_fit(fit)
 }
 }
