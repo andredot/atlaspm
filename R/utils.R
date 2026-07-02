@@ -68,3 +68,6 @@ share_objects <- function(obj_list) {
 
   obj_paths_latest
 }
+
+pad  <- function(x) sprintf(paste0("%0", 6, "d"), as.integer(x))
+

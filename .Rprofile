@@ -1,6 +1,7 @@
 source("renv/activate.R")
 
 options(tidyverse.quiet = TRUE)
+options(mc.cores = parallel::detectCores(logical = FALSE))
 
 stopifnot(
   `env var "PROJ_TITLE" must be set` = Sys.getenv("PROJ_TITLE") != "",

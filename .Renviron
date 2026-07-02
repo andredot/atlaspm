@@ -4,13 +4,13 @@ PATH="${RTOOLS40_HOME}\usr\bin;${PATH}"
 ATTACH_STARTUP_PKGS=TRUE
 
 # Project's information: ONE SINGLE LINE EACH (no line brakes!!)
-PROJ_TITLE="Project's Title"
-PROJ_DESCRIPTION="Project's description."
-PROJ_URL="https://github.com/UBESP-DCTV/laims.analysis"
+PROJ_TITLE="Atlas of Preventable Mortality"
+PROJ_DESCRIPTION="A Bayesian Spatial Analysis of Preventable Mortality Determinants in the Milan Metropolitan Area: Evaluating Socioeconomic and Healthcare Access Inequalities"
+PROJ_URL="https://github.com/andredot/atlaspm"
 
 # Shared folders local locations
 # PATH should be a proper path (C:\\...)
-PRJ_SHARED_PATH="C:\Users\corra\GitHub\ubep\laims.analysis"
+PRJ_SHARED_PATH="C:\Users\andre\Documents\MPH Final Project"
 # FOLDER shoud be only the name on the folder (and not the full path to that folder)
 INPUT_DATA_FOLDER="data-raw"
 OUTPUT_DATA_FOLDER="output"

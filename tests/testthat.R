@@ -1,4 +1,4 @@
 library(testthat)
-library(laims.analysis)
+library(atlaspm)
 
-test_check("laims.analysis")
+test_check("atlaspm")

@@ -13,43 +13,47 @@ knitr::opts_chunk$set(
 )
 ```
 
-# laims.analysis <img src='man/figures/logo.png' align="right" height="120" />
+# atlaspm
 
 <!-- badges: start -->
-[![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
-[![Codecov test coverage](https://codecov.io/gh/UBESP-DCTV/laims.analysis/branch/master/graph/badge.svg)](https://app.codecov.io/gh/UBESP-DCTV/laims.analysis?branch=master)
-[![R-CMD-check](https://github.com/UBESP-DCTV/laims.analysis/actions/workflows/check-release.yaml/badge.svg)](https://github.com/UBESP-DCTV/laims.analysis/actions/workflows/check-release.yaml)
-[![lint](https://github.com/UBESP-DCTV/laims.analysis/workflows/lint/badge.svg)](https://github.com/UBESP-DCTV/laims.analysis/actions)
-[![R-CMD-check](https://github.com/UBESP-DCTV/laims.analysis/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/UBESP-DCTV/laims.analysis/actions/workflows/R-CMD-check.yaml)
+[![check-prod](https://github.com/andredot/atlaspm/actions/workflows/check-prod.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/check-prod.yaml)
+[![check-dev](https://github.com/andredot/atlaspm/actions/workflows/check-dev.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/check-dev.yaml)
+[![test-coverage](https://github.com/andredot/atlaspm/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/test-coverage.yaml)
+[![lint](https://github.com/andredot/atlaspm/actions/workflows/lint.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/lint.yaml)
 <!-- badges: end -->
 
+The goal of atlaspm is to build a Bayesian Spatial Analysis of Preventable Mortality Determinants in the Milan Metropolitan Area
 
-This project would represent the template for the analyses conducted  within the Laboratory of Artificial Intelligence from the Medical  Sciences (LAIMS) at the Unit of Biostatistics, Epidemiology, and Public health (UBEP) within the Department of Cardiac, Thoracic, Vascular Sciences, and Public Health (DSCTVPH) of the University of Padova (UniPD).
+## Installation
 
+You can install the development version of atlaspm from [GitHub](https://github.com/) with:
 
-The aim is to provide a ready-to-use robust, reproducible infrastructure for complex to quick analyses.
+``` r
+# install.packages("pak")
+pak::pak("andredot/atlaspm")
+```
 
-When you create a new project based on this template, name it (i.e., it's folder) accordingly with your project's name (possibly without spaces). Next, you can open the `01-FIRST_RUN.R`script, and  execute the code and instructions within it. There, you will have the opportunity to set the very first and basic pieces of information for your project, and activate all its functionalities. After that, you can start to develop your project, defining its `targets` (i.e., it's main object outputs) in the `_targets.R` file, which define the concept DAG of your project tracking all it's dependencies. 
+## Example
 
-In the `dev/` folder, you will find also the `02-dev_cycle.R` and the `03-run_cycle.R` helping you across the development and execution/update of the project.
+This is a basic example which shows you how to solve a common problem:
 
+```{r example}
+library(atlaspm)
+## basic example code
+```
 
+What is special about using `README.Rmd` instead of just `README.md`? You can include R chunks like so:
 
-## Functionalities
+```{r cars}
+summary(cars)
+```
 
-- A dedicated packages' **project-level library** powered by `{renv}`
-- All the **documentation** for functions and the project itself powered by `{roxygen2}`
-- A **test-driven environment** powered by `{testthat}`, `{checkmate}`, and `{covr}`.
-- Systems for grammar and static code checking powered by `{spelling}` and `{lintr}`, respectively
-- Continuous Integration and Development is activated and powered by GitHub actions, automating linters and checks execution, and coverage assessment.
-- A full environment enforcing reproducibility by the execution, caching and invalidation of a structured project's pipeline powered by `{targets}` and `{tarchetypes}` in conjunction and synergy with Rmarkdown scientifically flavored documents powered by `{distill}` (with options for connections with Zotero as citation manager, linked with local or remote libraries)
+You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
 
+You can also embed plots, for example:
 
+```{r pressure, echo = FALSE}
+plot(pressure)
+```
 
-
-
-
-
-## Code of Conduct
-
-Please note that the `laims.analysis` project is released with a [Contributor Code of Conduct](https://contributor-covenant.org/version/2/0/CODE_OF_CONDUCT.html). By contributing to this project, you agree to abide by its terms.
+In that case, don't forget to commit and push the resulting figure files, so they display on GitHub and CRAN.
