@@ -243,3 +243,33 @@ cat("  total expected deaths :", round(total_expected, 6),
     " (should equal observed)\n")
 
 stopifnot(abs(total_expected - total_observed) < 1e-6)
+
+
+# =====================================================================
+# Mini test script for Moran I's calculation before and after BYM
+# =====================================================================
+
+
+library(geostan)
+library(spdep)
+set.seed(1)
+
+
+sg <- sf::st_drop_geometry(tar_read(smr_geo))
+smr_geo_bym2 <- tar_read(smr_geo_bym2)
+C_matrix <- tar_read(C_matrix)
+
+# 1. on the total SMR (quick, but noisy in small comuni)
+geostan::moran_plot(sg$total_smr, C_matrix)          # visual + the I in the title
+
+# 2. better: a variance-stabilised log relative risk, NA-guarded
+lrr <- log((sg$total_obs + 0.5) / (sg$total_exp + 0.5))
+geostan::moran_plot(lrr, C_matrix)
+
+# Monte Carlo permutation test for a p-value (999 permutations)
+lw <- spdep::mat2listw(as(C_matrix, "matrix") * 1, style = "W")  # *1 turns logical -> numeric
+spdep::moran.mc(lrr, lw, nsim = 9999, zero.policy = TRUE)
+
+# After fit
+spdep::moran.mc(smr_geo_bym2$bym2_rr, lw, nsim = 999, zero.policy = TRUE)
+geostan::moran_plot( sf::st_drop_geometry(smr_geo_bym2)$bym2_rr, C_matrix)          # visual + the I in the title
