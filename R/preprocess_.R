@@ -100,45 +100,60 @@ preprocess_mortality <- function(mort_raw,
     dplyr::filter(!is.na(.data[["cause"]])) |>
     dplyr::select(-dplyr::all_of(c(".code_norm", ".key4", ".key3")))
 }
-
-#' Crude mortality rate table by comune, wide over cause / group / mechanism
+#' Crude mortality rate table by area, wide over cause / group / mechanism
 #'
 #' Builds a wide crude-mortality-rate table with one row per area (comune by
-#' default) and one column per category of each classification, namely
-#' \code{cause} (columns prefixed \code{"C_"}), \code{group} (prefixed
-#' \code{"G_"}) and \code{mechanism} (prefixed \code{"M_"}). Every cell is the
-#' crude rate \code{deaths / population * per} (deaths per \code{per} residents,
-#' 100 000 by default).
+#' default, but any spatial unit - e.g. Milan's NILs - via
+#' \code{mort_col}/\code{pop_col}) and one column per category of each
+#' classification, namely \code{cause} (columns prefixed \code{"C_"}),
+#' \code{group} (prefixed \code{"G_"}) and \code{mechanism} (prefixed
+#' \code{"M_"}). Every cell is the crude rate \code{deaths / population * per}
+#' (deaths per \code{per} residents, 100 000 by default).
 #'
 #' The area key is kept as a plain column (\code{group_var}) rather than baked
-#' into the rates, so the same comune-level table can later be re-aggregated to
+#' into the rates, so the same area-level table can later be re-aggregated to
 #' ASST, distretto, etc. by joining a crosswalk and re-deriving rates.
 #'
 #' Deaths are aggregated as the \strong{sum of the \code{weight} column}, so the
 #' causes the OECD/Eurostat list splits 50/50 each count as 0.5 of a death. Set
 #' \code{weight_col = NULL} to count every record as a whole death.
 #'
-#' The denominator is read from a semicolon-separated population CSV with the
-#' columns \code{Codice comune;Eta;anno;sesso;Comune;numero}. Only the year
-#' \code{pop_year} (default 2023) is kept and \code{numero} is summed over all
-#' ages and both sexes to give one population figure per comune. The population
-#' \code{Codice comune} is matched to \code{mort_col} in \code{mort_count}
-#' (default \code{"comune_residenza"}).
+#' The denominator is read from a semicolon-separated population CSV. Only the
+#' year \code{pop_year} (default 2023) is kept and \code{numero} is summed over
+#' all ages and both sexes to give one population figure per area.
 #'
-#' Every comune present in the population file is returned; comuni with no
-#' deaths get 0 in every rate column.
+#' \strong{Area key.} The deaths-side key is \code{mort_col} and the
+#' population-side key is \code{pop_col}; the two must produce identical strings
+#' for the join. By default the population key is the numeric ISTAT code
+#' \code{Codice comune}, zero-padded to six digits (\code{pad_area = TRUE}) to
+#' match the padded codes in the deaths file. For a mixed key containing
+#' non-numeric values - e.g. an \code{area} column holding both \code{"015011"}
+#' (comune) and \code{"015146_79"} (Milan comune + NIL) - set \code{pad_area =
+#' FALSE} so the string passes through untouched (\code{as.integer("015146_79")}
+#' would otherwise become \code{NA} and silently drop that area's denominator).
+#'
+#' Every area present in the population file is returned; areas with no deaths
+#' get 0 in every rate column.
 #'
 #' @param mort_count Data frame of deaths, one row per death, containing the
 #'   area column \code{mort_col}, the classification columns \code{cause},
 #'   \code{group} and \code{mechanism}, and (unless \code{weight_col = NULL})
 #'   the weight column.
 #' @param population Path to the population CSV (or a pre-read data frame) with
-#'   columns \code{Codice comune}, \code{Eta}, \code{anno}, \code{sesso},
+#'   columns \code{pop_col}, \code{Eta}, \code{anno}, \code{sesso},
 #'   \code{Comune}, \code{numero}.
 #' @param group_var Name to give the area key in the output. Default
 #'   \code{"comune"}.
-#' @param mort_col Name of the comune column in \code{mort_count} that matches
-#'   the population \code{Codice comune}. Default \code{"comune_residenza"}.
+#' @param mort_col Name of the area column in \code{mort_count} that matches the
+#'   population key \code{pop_col}. Default \code{"comune_residenza"}.
+#' @param pop_col Area column in \code{population} matching \code{mort_col}.
+#'   Default \code{"Codice comune"}. Use \code{"area"} for a NIL-aware population
+#'   table keyed on a mixed comune/NIL column.
+#' @param pad_area Whether to zero-pad the population area key to six digits with
+#'   \code{sprintf("\%06d", ...)}. Default \code{TRUE} (correct for a purely
+#'   numeric ISTAT code). Set \code{FALSE} when \code{pop_col} holds non-numeric
+#'   keys such as \code{"015146_79"}, which must not be coerced through
+#'   \code{as.integer}.
 #' @param class_vars Named character vector mapping classification columns in
 #'   \code{mort_count} to their output column prefix. Default
 #'   \code{c(cause = "C", group = "G", mechanism = "M")}.
@@ -149,18 +164,26 @@ preprocess_mortality <- function(mort_raw,
 #'   record as one death. Default \code{"weight"}.
 #' @param per Rate denominator multiplier. Default \code{100000}.
 #'
-#' @return A tibble with one row per comune: \code{group_var}, \code{population},
+#' @return A tibble with one row per area: \code{group_var}, \code{population},
 #'   one crude-rate column per category named \code{<prefix>_<label>} with the
 #'   label cleaned to snake_case (e.g. \code{C_lung_cancer}, \code{G_cancer},
 #'   \code{M_immunisation_and_prophylaxis}), and a \code{total} column with the
-#'   crude rate over all deaths in the comune. Note the per-prefix columns do
+#'   crude rate over all deaths in the area. Note the per-prefix columns do
 #'   not sum to \code{total}: each classification (cause / group / mechanism)
 #'   already partitions the same deaths, and split causes are counted under
 #'   more than one mechanism.
 #'
 #' @examples
 #' \dontrun{
+#' # comune-level (defaults)
 #' rates <- preprocess_cmr(mort_count, "popolazione.csv")
+#'
+#' # area-level: Milan split into NILs, mixed comune/NIL key, no padding
+#' area_rates <- preprocess_cmr(mort_count_area, pop_area_table,
+#'                              group_var = "area",
+#'                              mort_col  = "area_residenza",
+#'                              pop_col   = "area",
+#'                              pad_area  = FALSE)
 #'
 #' # re-aggregate comuni to ASST later via a crosswalk:
 #' rates |>
@@ -180,6 +203,8 @@ preprocess_cmr <- function(mort_count,
                            population,
                            group_var  = "comune",
                            mort_col   = "comune_residenza",
+                           pop_col    = "Codice comune",
+                           pad_area   = TRUE,
                            class_vars = c(cause = "C", group = "G", mechanism = "M"),
                            pop_year   = 2023,
                            weight_col = "weight",
@@ -187,27 +212,32 @@ preprocess_cmr <- function(mort_count,
 
   use_weight <- !is.null(weight_col) && weight_col %in% names(mort_count)
 
-  # ---- 1. population denominator: one row per comune, 2023, all ages/sexes ----
+  # ---- 1. population denominator: one row per area, pop_year, all ages/sexes ----
   if (is.character(population)) {
     population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
   }
 
   pop <- population |>
     dplyr::filter(.data[["anno"]] == pop_year) |>
-    dplyr::mutate(`Codice comune` = sprintf("%06d", as.integer(`Codice comune`))) |>
-    dplyr::group_by(.data[["Codice comune"]]) |>
+    dplyr::mutate(
+      # match the deaths-side key: pad numeric comune codes to 6 digits, but let
+      # mixed keys like "015146_79" pass through as-is (as.integer() -> NA).
+      .area = if (pad_area) sprintf("%06d", as.integer(.data[[pop_col]]))
+      else as.character(.data[[pop_col]])
+    ) |>
+    dplyr::group_by(.area) |>
     dplyr::summarise(population = sum(.data[["numero"]], na.rm = TRUE),
                      .groups = "drop") |>
-    dplyr::rename(!!group_var := "Codice comune")
+    dplyr::rename(!!group_var := ".area")
 
-  # ---- 2. weighted deaths per comune x (each classification, each level) ----
+  # ---- 2. weighted deaths per area x (each classification, each level) ----
   m <- mort_count |>
     dplyr::mutate(
       .w    = if (use_weight) .data[[weight_col]] else 1,
       .area = as.character(.data[[mort_col]])
     )
 
-  # long table of (comune, column-name, deaths), looping over classifications
+  # long table of (area, column-name, deaths), looping over classifications
   counts <- purrr::imap_dfr(class_vars, function(prefix, var) {
     lvls   <- unique(as.character(m[[var]]))
     clean  <- stats::setNames(
@@ -222,7 +252,7 @@ preprocess_cmr <- function(mort_count,
   })
 
   # ---- 3. widen counts, join onto full population list, divide by pop ----
-  # Wide counts for comuni that actually have deaths (one column per category).
+  # Wide counts for areas that actually have deaths (one column per category).
   wide_counts <- counts |>
     tidyr::pivot_wider(
       id_cols     = ".area",
@@ -231,7 +261,7 @@ preprocess_cmr <- function(mort_count,
       values_fill = 0
     )
 
-  # Total deaths per comune (counted once, not summed across classifications).
+  # Total deaths per area (counted once, not summed across classifications).
   totals <- m |>
     dplyr::group_by(.area) |>
     dplyr::summarise(total = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop")
@@ -240,7 +270,7 @@ preprocess_cmr <- function(mort_count,
 
   rate_cols <- setdiff(names(wide_counts), ".area")
 
-  # Left-join onto EVERY comune in the population; comuni with no deaths get 0.
+  # Left-join onto EVERY area in the population; areas with no deaths get 0.
   pop |>
     dplyr::rename(.area = dplyr::all_of(group_var)) |>
     dplyr::left_join(wide_counts, by = ".area") |>
@@ -250,12 +280,13 @@ preprocess_cmr <- function(mort_count,
 }
 
 
-#' Indirectly standardised mortality table by comune, wide over cause / group / mechanism
+#' Indirectly standardised mortality table by area, wide over cause / group / mechanism
 #'
 #' Companion to \code{\link{preprocess_cmr}} that returns indirectly
 #' age-sex-standardised mortality instead of the crude rate. For every area
-#' (comune by default) and every category of each classification - \code{cause}
-#' (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
+#' (comune by default, but any spatial unit - e.g. Milan's NILs - via
+#' \code{mort_col}/\code{pop_col}) and every category of each classification -
+#' \code{cause} (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
 #' \code{mechanism} (\code{"M_"}) - it returns four columns: observed deaths
 #' (\code{<prefix>_<label>_obs}), expected deaths (\code{<prefix>_<label>_exp}),
 #' the SMR (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
@@ -272,24 +303,43 @@ preprocess_cmr <- function(mort_count,
 #'
 #' Deaths are weighted by \code{weight_col} (50/50 split causes contribute 0.5).
 #' Observed and expected deaths are aggregated on the same weighting, so the SMR
-#' is internally consistent. Every comune present in the population file is
-#' returned; comuni with no deaths get SMR/ISR/observed of 0, but their
+#' is internally consistent. Every area present in the population file is
+#' returned; areas with no deaths get SMR/ISR/observed of 0, but their
 #' \emph{expected} stays positive (it must not be zeroed - a Poisson spatial
 #' model uses \code{log(expected)} as its offset, and \code{log(0)} is
 #' undefined).
+#'
+#' \strong{Area key.} The deaths-side key is \code{mort_col} and the
+#' population-side key is \code{pop_col}; the two must produce identical strings
+#' for a join to occur. By default the population key is the numeric ISTAT code
+#' \code{Codice comune}, which is zero-padded to six digits (\code{pad_area =
+#' TRUE}) to match the padded codes carried in the deaths file. For a mixed key
+#' that contains non-numeric values - e.g. an \code{area} column holding both
+#' \code{"015011"} (comune) and \code{"015146_79"} (Milan comune + NIL) - set
+#' \code{pad_area = FALSE} so the string passes through untouched
+#' (\code{as.integer("015146_79")} would otherwise become \code{NA} and silently
+#' drop that area's denominator).
 #'
 #' @param mort_count Data frame of deaths, one row per death, containing the
 #'   area column \code{mort_col}, the strata columns \code{age_col} and
 #'   \code{sex_col}, the classification columns named in \code{class_vars}, and
 #'   (unless \code{weight_col = NULL}) the weight column.
 #' @param population Path to the semicolon-separated population CSV (or a
-#'   pre-read data frame) with columns \code{Codice comune}, \code{Eta},
-#'   \code{anno}, \code{sesso}, \code{Comune}, \code{numero}. \code{Eta} is the
-#'   single year of age and \code{numero} the population count.
+#'   pre-read data frame) with columns \code{pop_col}, \code{Eta}, \code{anno},
+#'   \code{sesso}, \code{Comune}, \code{numero}. \code{Eta} is the single year of
+#'   age and \code{numero} the population count.
 #' @param group_var Name to give the area key in the output. Default
 #'   \code{"comune"}.
-#' @param mort_col Comune column in \code{mort_count} matching the population
-#'   \code{Codice comune}. Default \code{"comune_residenza"}.
+#' @param mort_col Area column in \code{mort_count} matching the population key
+#'   \code{pop_col}. Default \code{"comune_residenza"}.
+#' @param pop_col Area column in \code{population} matching \code{mort_col}.
+#'   Default \code{"Codice comune"}. Use \code{"area"} for a NIL-aware population
+#'   table keyed on a mixed comune/NIL column.
+#' @param pad_area Whether to zero-pad the population area key to six digits with
+#'   \code{sprintf("\%06d", ...)}. Default \code{TRUE} (correct for a purely
+#'   numeric ISTAT code). Set \code{FALSE} when \code{pop_col} holds non-numeric
+#'   keys such as \code{"015146_79"}, which must not be coerced through
+#'   \code{as.integer}.
 #' @param age_col,sex_col Age (single year) and sex columns in \code{mort_count}.
 #'   Defaults \code{"eta"} and \code{"sesso"}. They are matched to \code{Eta}
 #'   and \code{sesso} in the population file.
@@ -301,7 +351,7 @@ preprocess_cmr <- function(mort_count,
 #'   record as one death. Default \code{"weight"}.
 #' @param per Multiplier for the standardised rate. Default \code{100000}.
 #'
-#' @return A tibble with one row per comune: \code{group_var}, \code{population},
+#' @return A tibble with one row per area: \code{group_var}, \code{population},
 #'   then for every category four columns \code{<prefix>_<label>_obs},
 #'   \code{<prefix>_<label>_exp}, \code{<prefix>_<label>_smr} and
 #'   \code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
@@ -314,7 +364,15 @@ preprocess_cmr <- function(mort_count,
 #'
 #' @examples
 #' \dontrun{
+#' # comune-level (defaults)
 #' smr <- preprocess_smr(mort_count, "popolazione.csv")
+#'
+#' # area-level: Milan split into NILs, mixed comune/NIL key, no padding
+#' area_smr <- preprocess_smr(mort_count_area, pop_area_table,
+#'                            group_var = "area",
+#'                            mort_col  = "area_residenza",
+#'                            pop_col   = "area",
+#'                            pad_area  = FALSE)
 #' }
 #'
 #' @seealso \code{\link{preprocess_cmr}} for the crude-rate version.
@@ -330,6 +388,8 @@ preprocess_smr <- function(mort_count,
                            population,
                            group_var  = "comune",
                            mort_col   = "comune_residenza",
+                           pop_col    = "Codice comune",
+                           pad_area   = TRUE,
                            age_col    = "eta",
                            sex_col    = "sesso",
                            class_vars = c(cause = "C", group = "G", mechanism = "M"),
@@ -339,7 +399,7 @@ preprocess_smr <- function(mort_count,
 
   use_weight <- !is.null(weight_col) && weight_col %in% names(mort_count)
 
-  # ---- 1. population by comune x age x sex (single year), padded code ----
+  # ---- 1. population by area x age x sex (single year) ----
   if (is.character(population)) {
     population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
   }
@@ -347,20 +407,23 @@ preprocess_smr <- function(mort_count,
   pop_strata <- population |>
     dplyr::filter(.data[["anno"]] == pop_year) |>
     dplyr::mutate(
-      .area = sprintf("%06d", as.integer(`Codice comune`)),  # match the 6-digit deaths code
-      .age  = as.integer(`Eta`),
+      # match the deaths-side key: pad numeric comune codes to 6 digits, but let
+      # mixed keys like "015146_79" pass through as-is (as.integer() -> NA).
+      .area = if (pad_area) sprintf("%06d", as.integer(.data[[pop_col]]))
+      else as.character(.data[[pop_col]]),
+      .age  = as.integer(.data[["Eta"]]),
       .sex  = as.integer(.data[["sesso"]]),
       .pop  = as.numeric(.data[["numero"]])
     ) |>
     dplyr::group_by(.area, .age, .sex) |>
     dplyr::summarise(.pop = sum(.pop, na.rm = TRUE), .groups = "drop")
 
-  # total resident population per comune (all ages/sexes) for the output
+  # total resident population per area (all ages/sexes) for the output
   pop_total <- pop_strata |>
     dplyr::group_by(.area) |>
     dplyr::summarise(population = sum(.pop), .groups = "drop")
 
-  # ---- 2. observed deaths per comune x category, and per stratum x category ----
+  # ---- 2. observed deaths per area x category, and per stratum x category ----
   m <- mort_count |>
     dplyr::mutate(
       .w    = if (use_weight) .data[[weight_col]] else 1,
@@ -399,12 +462,12 @@ preprocess_smr <- function(mort_count,
       dplyr::summarise(std_crude = sum(.data[[".w"]], na.rm = TRUE) / total_std_pop,
                        .groups = "drop")
 
-    # OBSERVED deaths per comune x level
+    # OBSERVED deaths per area x level
     observed <- mc |>
       dplyr::group_by(.area, .lvl) |>
       dplyr::summarise(observed = sum(.data[[".w"]], na.rm = TRUE), .groups = "drop")
 
-    # EXPECTED deaths per comune x level = sum over strata of
+    # EXPECTED deaths per area x level = sum over strata of
     #   (area pop in stratum) x (standard rate for that level/stratum)
     expected <- pop_strata |>
       dplyr::inner_join(std_rate, by = c(".age", ".sex"),
@@ -481,13 +544,58 @@ preprocess_smr <- function(mort_count,
     dplyr::left_join(wide_obs,    by = ".area") |>
     dplyr::left_join(wide_exp,    by = ".area") |>
     dplyr::left_join(total_block, by = ".area") |>
-    # comuni with no deaths: SMR/ISR/observed are 0, but EXPECTED must stay as-is
-    # (a death-free comune still has positive expected; zeroing it breaks log(E)).
+    # areas with no deaths: SMR/ISR/observed are 0, but EXPECTED must stay as-is
+    # (a death-free area still has positive expected; zeroing it breaks log(E)).
     dplyr::mutate(dplyr::across(
       -dplyr::all_of(c(".area", "population", exp_cols)),
       ~ dplyr::coalesce(.x, 0)
     )) |>
     dplyr::rename(!!group_var := ".area")
+}
+
+build_area_shp <- function(nil_shp, pop_shp, milan_code = "015146") {
+
+  # 0. put NILs in pop_shp's CRS (pop_shp is the master)
+  nil <- nil_shp |>
+    sf::st_transform(sf::st_crs(pop_shp)) |>
+    sf::st_make_valid()
+
+  milan_geom <- pop_shp |>
+    dplyr::filter(PRO_COM_T == milan_code) |>
+    sf::st_make_valid() |>
+    sf::st_geometry() |>
+    sf::st_union()
+
+  # 1. cookie-cut NILs to Milan's authoritative outline (removes overhang)
+  nil_cut <- nil |>
+    dplyr::select(ID_NIL) |>
+    sf::st_intersection(milan_geom) |>
+    sf::st_collection_extract("POLYGON") |>   # drop stray lines/points
+    sf::st_make_valid()
+
+  # 2. slivers of Milan left uncovered by any NIL (the boundary shortfall)
+  gaps <- sf::st_difference(milan_geom, sf::st_union(nil_cut))
+
+  if (length(gaps) > 0 && !all(sf::st_is_empty(gaps))) {
+    gaps_sfc <- gaps |> sf::st_cast("MULTIPOLYGON") |> sf::st_cast("POLYGON")
+    gaps_sf  <- sf::st_sf(ID_NIL = NA_integer_, geometry = gaps_sfc)
+    gaps_sf$ID_NIL <- nil_cut$ID_NIL[sf::st_nearest_feature(gaps_sf, nil_cut)]
+    nil_cut <- rbind(nil_cut, gaps_sf)
+  }
+
+  # 3. dissolve back to one polygon per NIL -> now tiles Milan exactly
+  milan_nils <- nil_cut |>
+    dplyr::group_by(ID_NIL) |>
+    dplyr::summarise(.groups = "drop") |>
+    dplyr::transmute(area = paste0(milan_code, "_", ID_NIL))
+
+  # 4. everything else keeps its pop_shp geometry, keyed the same way
+  others <- pop_shp |>
+    dplyr::filter(PRO_COM_T != milan_code) |>
+    dplyr::transmute(area = PRO_COM_T)
+
+  # 5. single layer, `area` == mort_count$area_residenza
+  rbind(others, milan_nils) |> sf::st_make_valid()
 }
 
 #' Build a binary spatial adjacency matrix from comune geometries
@@ -617,4 +725,36 @@ build_deprivation_proxy <- function(census, mort_raw,
     dplyr::select("comune", population = "P1",
                   "edu_low", "nonemp", "foreign", "crowd",
                   "di_score", "di_quintile")
+}
+
+build_pop_area_table <- function(pop_finale, pop_nil, mort_count,
+                                 milan_code = "015146") {
+
+  years <- sort(unique(mort_count$anno))          # analysis years, e.g. 2022:2024
+
+  # --- comuni: keep pop_finale as-is, drop Milan's aggregate, key on `area` ---
+  finale_area <- pop_finale |>
+    dplyr::mutate(area = sprintf("%06d", as.integer(`Codice comune`)),
+                  Eta  = sprintf("%03d", as.integer(Eta)),
+                  anno = as.character(anno),
+                  sesso = as.integer(sesso)) |>
+    dplyr::filter(area != milan_code) |>          # Milan is replaced by its NILs
+    dplyr::select(area, Eta, anno, sesso, Comune, numero)
+
+  # --- NILs: reshape to the same schema, replicate across years ---
+  nil_area <- pop_nil |>
+    rlang::set_names(c("nil_label", "genere", "eta_label", "n")) |>
+    dplyr::mutate(
+      nil_num = as.integer(stringr::str_extract(nil_label, "^[0-9]+")),
+      area    = paste0(milan_code, "_", nil_num),
+      sesso   = dplyr::recode(genere, "Maschi" = 1L, "Femmine" = 2L),
+      Eta     = sprintf("%03d", as.integer(stringr::str_extract(eta_label, "[0-9]+")))
+    ) |>
+    dplyr::group_by(area, Eta, sesso) |>
+    dplyr::summarise(numero = sum(n), .groups = "drop") |>
+    tidyr::crossing(anno = as.character(years)) |>   # snapshot -> every analysis year
+    dplyr::mutate(Comune = "Milano") |>
+    dplyr::select(area, Eta, anno, sesso, Comune, numero)
+
+  dplyr::bind_rows(finale_area, nil_area)
 }
