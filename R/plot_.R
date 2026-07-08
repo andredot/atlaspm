@@ -1,13 +1,13 @@
-#' Map indirectly standardised preventable mortality by comune
+#' Map indirectly standardised preventable mortality by area
 #'
 #' Draws a choropleth of the all-cause standardised mortality ratio
 #' (\code{total_smr}) from a geometry-attached \code{smr} table (the output of
 #' \code{preprocess_smr()} passed through \code{add_geo()}). The SMR is binned
 #' into 5 classes anchored on 1.0 (= deaths matching the age-sex expectation) and
-#' shown with an earthy diverging palette, no comune borders and a clean
+#' shown with an earthy diverging palette, no area borders and a clean
 #' \code{theme_void}.
 #'
-#' @param smr An \code{sf} object with one row per comune and a numeric SMR
+#' @param smr An \code{sf} object with one row per area and a numeric SMR
 #'   column, e.g. \code{add_geo(preprocess_smr(...), comuni)}.
 #' @param value Name of the SMR column to map. Default \code{"total_smr"}.
 #' @param breaks Numeric cut points defining the 5 classes. Default
@@ -35,7 +35,7 @@
 plot_smr_map <- function(smr,
                          value    = "total_smr",
                          breaks   = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
-                         title    = "Preventable mortality by Comune",
+                         title    = "Preventable mortality by area",
                          subtitle = "Indirectly standardised mortality ratio (SMR) for preventable causes",
                          caption  = "SMR = 1 means deaths match the area-wide age-sex expectation.") {
 
@@ -87,14 +87,14 @@ plot_smr_map <- function(smr,
 #' several categories at once - by default the seven mechanism columns
 #' (\code{M_*_smr}) produced by \code{preprocess_smr()} and passed through
 #' \code{add_geo()}. Each facet is one category; all share the same SMR bins
-#' (anchored on 1.0), the same earthy diverging palette, no comune borders and a
+#' (anchored on 1.0), the same earthy diverging palette, no area borders and a
 #' single shared legend, so the panels are directly comparable.
 #'
 #' The columns to map are selected with a \code{tidyselect} expression
 #' (\code{cols}); their facet titles are the column names with the prefix and the
 #' \code{"_smr"} suffix stripped and underscores turned to spaces.
 #'
-#' @param smr An \code{sf} object with one row per comune and several SMR
+#' @param smr An \code{sf} object with one row per area and several SMR
 #'   columns, e.g. \code{add_geo(preprocess_smr(...), comuni)}.
 #' @param cols A \code{tidyselect} expression choosing the SMR columns to map.
 #'   Default \code{dplyr::matches("^M_.*_smr$")} (the seven mechanism SMRs;
@@ -134,7 +134,7 @@ plot_smr_facets <- function(smr,
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
                             ncol         = 4,
-                            title    = "Standardised preventable mortality by mechanism, by comune",
+                            title    = "Standardised preventable mortality by mechanism, by area",
                             subtitle = "Indirectly age-sex standardised mortality ratio (SMR); 1 = deaths match the age-sex expectation",
                             caption  = "Each panel standardised on the same age-sex schedule; bins shared across panels.") {
 
@@ -149,9 +149,9 @@ plot_smr_facets <- function(smr,
 
   smr <- sf::st_as_sf(smr)   # defend against a demoted (non-sf) input
 
-  # The geometry (one polygon per comune) is the same across every category, so
+  # The geometry (one polygon per area) is the same across every category, so
   # pivot the PLAIN attribute table to long, then attach a single geometry copy
-  # per comune back by row index. Reshaping an sf directly trips
+  # per area back by row index. Reshaping an sf directly trips
   # "column `geometry` is an sfc object", so we keep geometry out of the pivot.
   geom_lookup <- tibble::tibble(
     .row     = seq_len(nrow(smr)),
@@ -199,15 +199,15 @@ plot_smr_facets <- function(smr,
 
 #' Crude vs standardised mortality scatter (overall)
 #'
-#' One point per comune: crude mortality rate on the x-axis, indirectly
+#' One point per area: crude mortality rate on the x-axis, indirectly
 #' standardised rate (ISR) on the y-axis, coloured by the SMR. The dashed
 #' diagonal marks where the standardised rate equals the crude rate, so points
 #' above it are pulled up by standardisation (younger-than-standard population)
 #' and points below pulled down.
 #'
-#' @param cmr Crude-rate table from \code{preprocess_cmr()} (one row per comune).
-#' @param smr Standardised table from \code{preprocess_smr()} (one row per comune).
-#' @param group_var Comune key present in both. Default \code{"comune"}.
+#' @param cmr Crude-rate table from \code{preprocess_cmr()} (one row per area).
+#' @param smr Standardised table from \code{preprocess_smr()} (one row per area).
+#' @param group_var area key present in both. Default \code{"area"}.
 #' @param crude,isr,smr_col Column names to use. Defaults \code{"total"},
 #'   \code{"total_isr"}, \code{"total_smr"}.
 #' @param title,subtitle Plot annotations.
@@ -218,12 +218,12 @@ plot_smr_facets <- function(smr,
 #' @importFrom rlang .data
 #' @export
 plot_cmr_isr <- function(cmr, smr,
-                         group_var = "comune",
+                         group_var = "area",
                          crude     = "total",
                          isr       = "total_isr",
                          smr_col   = "total_smr",
-                         title     = "Crude vs standardised preventable mortality, by comune",
-                         subtitle  = "Each point a comune; colour = SMR (observed / expected)") {
+                         title     = "Crude vs standardised preventable mortality, by area",
+                         subtitle  = "Each point a area; colour = SMR (observed / expected)") {
 
   d <- dplyr::inner_join(
     dplyr::select(cmr, dplyr::all_of(c(group_var, crude)))   |> stats::setNames(c(group_var, "crude")),
@@ -263,8 +263,8 @@ plot_cmr_isr <- function(cmr, smr,
 #' (e.g. \code{M_lifestyle_and_ncds}); the matching ISR/SMR columns come from
 #' \code{smr} (\code{..._isr}, \code{..._smr}).
 #'
-#' @param cmr,smr Crude and standardised tables (one row per comune).
-#' @param group_var Comune key present in both. Default \code{"comune"}.
+#' @param cmr,smr Crude and standardised tables (one row per area).
+#' @param group_var area key present in both. Default \code{"area"}.
 #' @param prefix Column prefix selecting the category block. Default \code{"M_"}.
 #' @param ncol Number of facet columns. Default \code{4}.
 #' @param title,subtitle Plot annotations.
@@ -277,11 +277,11 @@ plot_cmr_isr <- function(cmr, smr,
 #' @importFrom rlang .data
 #' @export
 plot_cmr_isr_facets <- function(cmr, smr,
-                                group_var = "comune",
+                                group_var = "area",
                                 prefix    = "M_",
                                 ncol      = 4,
                                 title     = "Crude vs standardised preventable mortality by mechanism",
-                                subtitle  = "Each point a comune; colour = SMR. Free scales per panel.") {
+                                subtitle  = "Each point a area; colour = SMR. Free scales per panel.") {
 
   crude_long <- cmr |>
     dplyr::select(dplyr::all_of(group_var), dplyr::matches(paste0("^", prefix))) |>
@@ -328,14 +328,14 @@ plot_cmr_isr_facets <- function(cmr, smr,
 
 #' Standardised mortality rate vs a vulnerability/deprivation index scatter
 #'
-#' One point per comune: a contextual index (IVSM, Deprivation Index, ...) on
+#' One point per area: a contextual index (IVSM, Deprivation Index, ...) on
 #' the x-axis and the overall indirectly standardised mortality rate (ISR,
 #' \emph{not} the SMR ratio) on the y-axis. A positive slope indicates that more
 #' deprived/vulnerable comuni also carry higher standardised mortality. The ISR
 #' comes from \code{\link{preprocess_smr}} (the \code{total_isr} column by
 #' default); the index comes from \code{\link{import_ivsm}} or
 #' \code{\link{build_deprivation_proxy}}. The two are joined on the shared
-#' \code{comune} key.
+#' \code{area} key.
 #'
 #' The function is index-agnostic: point the \code{index_col} argument at the
 #' relevant column and set \code{ref_line} to the index's natural anchor — 100
@@ -343,10 +343,10 @@ plot_cmr_isr_facets <- function(cmr, smr,
 #' z-scores). Leave \code{ref_line = NULL} to omit the line.
 #'
 #' @param smr Standardised table from \code{preprocess_smr()} (one row per
-#'   comune), supplying the standardised rate.
-#' @param index Index table (one row per comune) from \code{import_ivsm()} or
+#'   area), supplying the standardised rate.
+#' @param index Index table (one row per area) from \code{import_ivsm()} or
 #'   \code{build_deprivation_proxy()}.
-#' @param group_var Comune key present in both. Default \code{"comune"}.
+#' @param group_var area key present in both. Default \code{"area"}.
 #' @param isr Column in \code{smr} holding the overall standardised rate.
 #'   Default \code{"total_isr"}.
 #' @param index_col Column in \code{index} holding the index value. Default
@@ -363,14 +363,14 @@ plot_cmr_isr_facets <- function(cmr, smr,
 #' @importFrom rlang .data
 #' @export
 plot_scatter_smr_index <- function(smr, index,
-                                   group_var = "comune",
+                                   group_var = "area",
                                    isr       = "total_isr",
                                    index_col = "ivsm",
                                    ref_line  = NULL,
                                    xlab      = "Vulnerability / deprivation index",
                                    smooth    = TRUE,
-                                   title     = "Standardised mortality vs index, by comune",
-                                   subtitle  = "Each point a comune; x = index, y = indirectly standardised rate") {
+                                   title     = "Standardised mortality vs index, by area",
+                                   subtitle  = "Each point a area; x = index, y = indirectly standardised rate") {
 
   d <- dplyr::inner_join(
     dplyr::select(smr,   dplyr::all_of(c(group_var, isr)))       |> stats::setNames(c(group_var, "isr")),
@@ -560,7 +560,7 @@ plot_exceedance_facets <- function(geo,
                                    strip_prefix    = "^M_",
                                    strip_suffix    = "_bym2_exc$",
                                    ncol            = 4,
-                                   title    = "Strategic prioritisation map by mechanism, by comune",
+                                   title    = "Strategic prioritisation map by mechanism, by area",
                                    subtitle = NULL,
                                    caption  = "Per-mechanism BYM2 exceedance probabilities; tiers shared across panels.",
                                    threshold_label = NULL,
@@ -597,7 +597,7 @@ plot_exceedance_facets <- function(geo,
   geo <- sf::st_as_sf(geo)   # defend against a demoted (non-sf) input
 
   # Reshaping an sf directly trips "column `geometry` is an sfc object", so pivot
-  # the PLAIN attribute table long, then re-attach one geometry copy per comune
+  # the PLAIN attribute table long, then re-attach one geometry copy per area
   # by row index (geometry is identical across every mechanism panel).
   geom_col <- attr(geo, "sf_column")
   geo_idx  <- dplyr::mutate(geo, .row = dplyr::row_number())
@@ -625,7 +625,7 @@ plot_exceedance_facets <- function(geo,
       )
     )
 
-  # one geometry per comune, keyed by the same row index
+  # one geometry per area, keyed by the same row index
   geo_lookup <- tibble::tibble(.row = geo_idx$.row)
   geo_lookup[[geom_col]] <- sf::st_geometry(geo)
 

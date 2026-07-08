@@ -28,12 +28,18 @@ tar_source()
 # End this file with a list of target objects.
 list(
   # LOOK UP TABLES
-  tar_target(lookup_causes, get_input_data_path("avoidable_lookup_v2.csv")),
+  tar_target(lookup_causes, get_input_data_path("avoidable_lookup_v3.csv")),
   tar_target(pop_table, get_input_data_path("pop_finale.csv") |>
                readr::read_delim(delim = ";", show_col_types = FALSE)),
+  tar_target(pop_nil, get_input_data_path("pop_nil.csv") |>
+               readr::read_delim(delim = ",", show_col_types = FALSE)),
   tar_target(pop_shp,
              get_input_data_path("geodata/Com01012025_g/Com01012025_g_WGS84.shp") |>
                sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
+  tar_target(nil_shp,
+             get_input_data_path("geodata/ds964_nil_wm/NIL_WM.shp") |>
+               sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
+  tar_target(area_shp, build_area_shp(nil_shp, pop_shp)),
 
   # IMPORT
   tar_target(mort_path, get_input_data_path("mort.csv")),
@@ -49,15 +55,32 @@ list(
                                               lookup_causes,
                                               code_col = "causa",
                                               age_col = "eta")),
-  tar_target(mort_crude, preprocess_cmr(mort_count,
-                                        pop_table)),
-  tar_target(mort_smr, preprocess_smr(mort_count,
-                                      pop_table)),
-  tar_target(smr_geo, add_geo(mort_smr, pop_shp, data_key = "comune")),
+  tar_target(mort_count_area,
+             dplyr::filter(mort_count, area_residenza %in% area_shp$area)),
+  tar_target(pop_area_table,
+             build_pop_area_table(pop_table, pop_nil, mort_count)),
+  tar_target(mort_crude, preprocess_cmr(mort_count_area,
+                                        pop_area_table,
+                                        group_var = "area",
+                                        mort_col  = "area_residenza",
+                                        pop_col   = "area",
+                                        pad_area  = FALSE)),
+  tar_target(mort_smr, preprocess_smr(mort_count_area,
+                                      pop_area_table,
+                                      group_var = "area",
+                                      mort_col  = "area_residenza",
+                                      pop_col   = "area",
+                                      pad_area  = FALSE)),
+  tar_target(smr_geo, add_geo(mort_smr, area_shp,
+                              data_key = "area",
+                              shp_key  = "area",
+                              pad_keys = FALSE)),
   tar_target(C_matrix, build_adjacency(smr_geo)),
 
-  tar_target(smr_geo_ivsm, add_covariate(smr_geo, ivsm_raw, var = "ivsm")),
-  tar_target(smr_geo_di, add_covariate(smr_geo, deprivation, var = "di_score")),
+  tar_target(ivsm_area,        expand_cov_to_area(ivsm_raw,   area_shp$area, by = "comune")),
+  tar_target(deprivation_area, expand_cov_to_area(deprivation, area_shp$area, by = "comune")),
+  tar_target(smr_geo_ivsm, add_covariate(smr_geo, ivsm_area,        var = "ivsm",     by = "area")),
+  tar_target(smr_geo_di,   add_covariate(smr_geo, deprivation_area, var = "di_score", by = "area")),
 
   # BYM MODEL ------------------------------------------------------------
   tar_target(scale_factor, compute_scale_factor(C_matrix)),
@@ -201,9 +224,9 @@ list(
     subtitle  = "Each point a comune; x = Deprivation Index, y = indirectly standardised rate")),
 
   # MAPS
-  tar_target(map_smr_overall, mort_smr |> add_geo(pop_shp, data_key = "comune") |>
+  tar_target(map_smr_overall, mort_smr |> add_geo(pop_shp, data_key = "area") |>
                plot_smr_map()),
-  tar_target(map_smr_mechanism, mort_smr |> add_geo(pop_shp, data_key = "comune") |>
+  tar_target(map_smr_mechanism, mort_smr |> add_geo(pop_shp, data_key = "area") |>
                plot_smr_facets()),
 
   # REPORT
