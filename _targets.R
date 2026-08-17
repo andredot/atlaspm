@@ -57,6 +57,13 @@ list(
                                               age_col = "eta")),
   tar_target(mort_count_area,
              dplyr::filter(mort_count, area_residenza %in% area_shp$area)),
+  # one row per decedent - Table 1 and the reported N come from here,
+  # never from nrow(mort_count)
+  tar_target(deaths, build_deaths(mort_count)),
+  tar_target(deaths_area, build_deaths(mort_count_area)),
+  tar_target(layer_sizes,
+             dplyr::count(mort_count_area, mechanism, wt = weight,
+                          name = "deaths")),
   tar_target(pop_area_table,
              build_pop_area_table(pop_table, pop_nil, mort_count)),
   tar_target(mort_crude, preprocess_cmr(mort_count_area,
@@ -76,6 +83,37 @@ list(
                               shp_key  = "area",
                               pad_keys = FALSE)),
   tar_target(C_matrix, build_adjacency(smr_geo)),
+
+  # POLLUTION (S8) -------------------------------------------------------
+  # EEA 1 km interpolated annual means (EPSG:3035). 2023 is the exposure, at
+  # the midpoint of the 2022-2024 window; 2013 is diagnostic only, feeding the
+  # rank-stability criterion. Never fit a model on the 2013 columns.
+  tar_target(aq_dir, get_input_data_path("eea_aq"), format = "file"),
+  tar_target(aq_manifest, discover_aq_files(aq_dir)),
+  # smr_geo, not area_shp: area_shp carries all 7983 Italian comuni, so
+  # extracting over it would defeat the crop, waste ~30x the work, and compute
+  # the 8.3 spread statistics over the whole country instead of the 279
+  # modelled areas.
+  tar_target(pollution_area,
+             build_pollution_area(smr_geo, manifest = aq_manifest)),
+  tar_target(aq_ranks, check_aq_ranks(pollution_area, years = c(2013L, 2023L))),
+
+  # 8.3 selection diagnostic. Exposure-only by construction. z_low arrives
+  # from the 10.3 canonical-regressor target; until then cor_z_low is NA and
+  # the pollutant decision stays formally open.
+  tar_target(
+    pollutant_selection,
+    pollutant_selection_table(
+      dplyr::left_join(pollution_area, deprivation_area, by = "area"),
+      year   = 2023L,
+      di_col = "di_score",
+      z_low  = NULL,
+      ranks  = aq_ranks
+    )
+  ),
+
+  # covariates attached to the modelling sf by the same route as IVSM/DI
+  tar_target(smr_geo_poll, add_pollution(smr_geo, pollution_area)),
 
   tar_target(ivsm_area,        expand_cov_to_area(ivsm_raw,   area_shp$area, by = "comune")),
   tar_target(deprivation_area, expand_cov_to_area(deprivation, area_shp$area, by = "comune")),
@@ -208,7 +246,7 @@ list(
   tar_target(scatter_cmr_isr_overall,   plot_cmr_isr(mort_crude, mort_smr)),
   tar_target(scatter_cmr_isr_mechanism, plot_cmr_isr_facets(mort_crude, mort_smr)),
   tar_target(scatter_smr_ivsm, plot_scatter_smr_index(
-    mort_smr, ivsm_raw,
+    mort_smr, ivsm_area,
     index_col = "ivsm",
     ref_line  = 100,
     xlab      = "IVSM (social & material vulnerability index)",
@@ -216,7 +254,7 @@ list(
     subtitle  = "Each point a comune; x = IVSM (national average = 100), y = indirectly standardised rate")),
 
   tar_target(scatter_smr_di, plot_scatter_smr_index(
-    mort_smr, deprivation,
+    mort_smr, deprivation_area,
     index_col = "di_score",
     ref_line  = 0,
     xlab      = "Italian Deprivation Index (sum of national z-scores)",
@@ -224,9 +262,19 @@ list(
     subtitle  = "Each point a comune; x = Deprivation Index, y = indirectly standardised rate")),
 
   # MAPS
-  tar_target(map_smr_overall, mort_smr |> add_geo(pop_shp, data_key = "area") |>
+  # area_shp with pad_keys = FALSE, not pop_shp with the default padding:
+  # pop_shp is keyed on PRO_COM_T and the default pad coerces through
+  # as.integer(), so every NIL key ("015146_79") would become NA and all ~80
+  # Milan NILs would collapse into one row.
+  tar_target(map_smr_overall,
+             mort_smr |>
+               add_geo(area_shp, data_key = "area", shp_key = "area",
+                       pad_keys = FALSE) |>
                plot_smr_map()),
-  tar_target(map_smr_mechanism, mort_smr |> add_geo(pop_shp, data_key = "area") |>
+  tar_target(map_smr_mechanism,
+             mort_smr |>
+               add_geo(area_shp, data_key = "area", shp_key = "area",
+                       pad_keys = FALSE) |>
                plot_smr_facets()),
 
   # REPORT

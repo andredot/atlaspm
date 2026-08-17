@@ -62,6 +62,12 @@ import_mortality <- function(file_path) {
   ) |>
     dplyr::rename(causa = causa_finale) |>
     dplyr::mutate(
+      # stable per-decedent key, assigned in file order BEFORE any
+      # lookup join. The 50/50 causes are fanned out into two rows by the
+      # left_join in preprocess_mortality(); without an upstream id there
+      # is no way to recover the decedent afterwards.
+      death_id = dplyr::row_number(),
+
       # sex as a categorical variable
       sesso = factor(sesso),
 

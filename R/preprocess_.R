@@ -68,8 +68,10 @@ preprocess_mortality <- function(mort_raw,
   }
   lookup <- dplyr::select(
     lookup,
-    dplyr::any_of(c("key", "group", "cause", "weight", "mechanism"))
+    dplyr::any_of(c("key", "group", "cause", "type", "weight", "mechanism",
+                    "flag"))
   )
+  validate_lookup(lookup)
 
   # Split the lookup by key length so the 4-char match can take priority
   key4_set <- lookup$key[stringr::str_length(lookup$key) == 4]
@@ -757,4 +759,102 @@ build_pop_area_table <- function(pop_finale, pop_nil, mort_count,
     dplyr::select(area, Eta, anno, sesso, Comune, numero)
 
   dplyr::bind_rows(finale_area, nil_area)
+}
+
+
+#' Validate the avoidable-cause lookup before it is joined
+#'
+#' The 50/50 causes are represented as \strong{two rows sharing one ICD key},
+#' one \code{Preventable} and one \code{Treatable}, each carrying
+#' \code{weight = 0.5} and a different \code{mechanism}. The fan-out that
+#' produces the duplicated death records in \code{mort_count} is therefore a
+#' property of the lookup, not an explicit duplication step in the code. If a
+#' split cause is ever collapsed to a single row, the second mechanism
+#' disappears silently and every weighted count is wrong by half that cause.
+#'
+#' This function fails loudly on the three ways that can break:
+#' \enumerate{
+#'   \item a key whose weights do not sum to exactly 1;
+#'   \item a duplicated key whose rows share a \code{mechanism} (the join would
+#'     fan out into indistinguishable rows);
+#'   \item a weight that is neither 1 nor 0.5.
+#' }
+#'
+#' @param lookup The lookup table, after column selection.
+#' @return \code{lookup}, invisibly, if every check passes.
+#' @importFrom dplyr group_by summarise filter n_distinct n |>
+#' @export
+validate_lookup <- function(lookup) {
+
+  stopifnot(all(c("key", "weight", "mechanism") %in% names(lookup)))
+
+  bad_w <- setdiff(unique(lookup$weight), c(1, 0.5))
+  if (length(bad_w)) {
+    stop("Unexpected weight(s) in lookup: ",
+         paste(bad_w, collapse = ", "), call. = FALSE)
+  }
+
+  by_key <- lookup |>
+    dplyr::group_by(.data[["key"]]) |>
+    dplyr::summarise(
+      total_w  = sum(.data[["weight"]]),
+      n_rows   = dplyr::n(),
+      n_mech   = dplyr::n_distinct(.data[["mechanism"]]),
+      .groups  = "drop"
+    )
+
+  unbalanced <- dplyr::filter(by_key, abs(.data[["total_w"]] - 1) > 1e-9)
+  if (nrow(unbalanced)) {
+    stop("Lookup keys whose weights do not sum to 1: ",
+         paste(unbalanced$key, collapse = ", "), call. = FALSE)
+  }
+
+  collided <- dplyr::filter(by_key, .data[["n_rows"]] > .data[["n_mech"]])
+  if (nrow(collided)) {
+    stop("Lookup keys duplicated within the same mechanism: ",
+         paste(collided$key, collapse = ", "), call. = FALSE)
+  }
+
+  invisible(lookup)
+}
+
+
+#' One row per decedent, recovered from the fanned-out death table
+#'
+#' \code{mort_count} has one row per \emph{death x mechanism}: the 50/50 causes
+#' occupy two rows apiece, so its row count overstates the number of people who
+#' died. Anything describing \strong{decedents} - Table 1, the age and sex
+#' distribution, the total N reported in the abstract - must be built from this
+#' function, and anything describing \strong{deaths attributable to a layer}
+#' must be built by summing \code{weight}.
+#'
+#' The surviving row for a split cause is the \code{Preventable} one by default,
+#' so \code{group} and \code{cause} remain interpretable; \code{mechanism} on
+#' the returned object is \strong{not} meaningful for split causes and is
+#' dropped to prevent it being used by accident.
+#'
+#' @param mort_count Output of \code{\link{preprocess_mortality}}.
+#' @param keep_type Which side of a split cause to retain. Default
+#'   \code{"Preventable"}.
+#' @return A tibble with one row per \code{death_id}, without the
+#'   \code{mechanism}, \code{type}, \code{weight} and \code{flag} columns.
+#' @importFrom dplyr arrange distinct select any_of desc |>
+#' @export
+build_deaths <- function(mort_count, keep_type = "Preventable") {
+
+  stopifnot("death_id" %in% names(mort_count))
+
+  n_deaths <- length(unique(mort_count$death_id))
+  w_total  <- sum(mort_count$weight)
+  if (abs(w_total - n_deaths) > 1e-6) {
+    stop("sum(weight) = ", w_total, " but there are ", n_deaths,
+         " distinct death_id. A split cause has lost one of its two rows, ",
+         "or a death_id was assigned after the lookup join.", call. = FALSE)
+  }
+
+  mort_count |>
+    dplyr::arrange(.data[["death_id"]],
+                   dplyr::desc(.data[["type"]] == keep_type)) |>
+    dplyr::distinct(.data[["death_id"]], .keep_all = TRUE) |>
+    dplyr::select(-dplyr::any_of(c("mechanism", "type", "weight", "flag")))
 }
