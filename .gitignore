@@ -5,3 +5,9 @@
 .Renviron
 inst/extdata
 pat.txt
+
+_targets.yaml
+
+_targets/
+
+reports/
