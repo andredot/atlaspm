@@ -10,4 +10,4 @@ _targets.yaml
 
 _targets/
 
-reports/
+*.html
