@@ -85,22 +85,11 @@ list(
   tar_target(C_matrix, build_adjacency(smr_geo)),
 
   # POLLUTION (S8) -------------------------------------------------------
-  # EEA 1 km interpolated annual means (EPSG:3035). 2023 is the exposure, at
-  # the midpoint of the 2022-2024 window; 2013 is diagnostic only, feeding the
-  # rank-stability criterion. Never fit a model on the 2013 columns.
   tar_target(aq_dir, get_input_data_path("eea_aq"), format = "file"),
   tar_target(aq_manifest, discover_aq_files(aq_dir)),
-  # smr_geo, not area_shp: area_shp carries all 7983 Italian comuni, so
-  # extracting over it would defeat the crop, waste ~30x the work, and compute
-  # the 8.3 spread statistics over the whole country instead of the 279
-  # modelled areas.
   tar_target(pollution_area,
              build_pollution_area(smr_geo, manifest = aq_manifest)),
   tar_target(aq_ranks, check_aq_ranks(pollution_area, years = c(2013L, 2023L))),
-
-  # 8.3 selection diagnostic. Exposure-only by construction. z_low arrives
-  # from the 10.3 canonical-regressor target; until then cor_z_low is NA and
-  # the pollutant decision stays formally open.
   tar_target(
     pollutant_selection,
     pollutant_selection_table(
@@ -109,6 +98,94 @@ list(
       di_col = "di_score",
       z_low  = NULL,
       ranks  = aq_ranks
+    )
+  ),
+
+  # STROKE NETWORK ACCESS ----------------------------------------
+  tar_target(stroke_centres_path,
+             get_input_data_path("stroke_centres_dgr7473.csv"),
+             format = "file"),
+  tar_target(stroke_centres_raw, import_stroke_centres(stroke_centres_path)),
+
+  tar_target(
+    stroke_centres,
+    geocode_stroke_centres(
+      stroke_centres_raw,
+      registry = NULL,
+      # Populate from the failures reported by check_stroke_centres()
+      overrides = list(
+        "Ospedale di Circolo di Varese" = c(45.80989, 8.8391),
+        "Ospedale di Circolo Desio" = c(45.62642, 9.19632),
+        "Policlinico San Marco Zingonia" = c(45.60409, 9.5911),
+        "Istituto Clinico S. Anna" = c(45.55361, 10.18027),
+        "Fondazione IRCCS Policlinico San Matteo" = c(45.19622, 9.14884),
+        "Ospedale G. Salvini" = c(45.58284, 9.09504)
+      )
+    )
+  ),
+
+  # tar_target(stroke_centres_ok,
+  #            check_stroke_centres(stroke_centres, pop_shp,
+  #                                 name_col = "COMUNE")),
+
+  # Origins: ISTAT census sections. Column names differ between the 2011 and
+  # 2021 releases -- build_section_points() fails loudly with the available
+  # names rather than guessing.
+  tar_target(sez_shp,
+             get_input_data_path("geodata/R03_21/R03_21_WGS84.shp") |>
+               sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
+  tar_target(section_points, build_section_points(sez_shp, area_shp,
+                                                  pop_col = "POP21")),
+  tar_target(urban_mask, build_urban_mask(sez_shp, tipo_loc_col = "TIPO_LOC")),
+
+  # Routing area: the modelled areas plus a buffer wide enough that routes
+  # leaving the study area are not truncated. 40 km is generous for ATS
+  # Milano; raise it if the study area ever extends into alpine comuni.
+  tar_target(stroke_aoi,
+             smr_geo |> sf::st_transform(32632L) |> sf::st_union() |>
+               sf::st_buffer(40000)),
+
+  # The slow target: 10-40 min and 8-16 GB. Cached by targets thereafter.
+  # speed_model = "areu" reproduces the 33/60/90 km/h assumptions behind the
+  # DGR's own centralisation maps, so the output is commensurable with the
+  # regional 45-minute threshold. "osm" models a private car instead.
+  tar_target(stroke_network,
+             build_stroke_network(stroke_aoi, urban_mask,
+                                  speed_model = "areu",
+                                  osm_dir = get_input_data_path("osm"))),
+
+  tar_target(stroke_times,
+             build_stroke_times(stroke_network, stroke_centres,
+                                section_points)),
+  tar_target(stroke_area, build_stroke_area(stroke_times)),
+  tar_target(diag_stroke, check_stroke_access(stroke_times, stroke_area,
+                                              print = FALSE)),
+
+  tar_target(smr_geo_stroke, add_stroke_access(smr_geo, stroke_area)),
+
+  # Model. pop_share_over_45min_hub is the alternative worth fitting alongside
+  # t_hub_mean_z: bounded on [0,1], and anchored to the DGR's own decision
+  # rule rather than to an arbitrary scale.
+  tar_target(
+    model_stroke,
+    fit_bym2(
+      smr_geo_stroke, C_matrix,
+      formula      = total_obs ~ t_hub_mean_z + offset(log(total_exp)),
+      scale_factor = scale_factor,
+      cores        = 4,
+      refresh      = 0
+    )
+  ),
+  tar_target(diag_stroke_fit, check_bym2_fit(model_stroke, print = FALSE)),
+  tar_target(smr_geo_stroke_bym2,
+             augment_bym2(smr_geo_stroke, model_stroke, threshold = 1.10)),
+  tar_target(
+    map_smr_stroke,
+    plot_smr_map(
+      smr_geo_stroke_bym2,
+      value    = "bym2_rr",
+      title    = "BYM2-smoothed preventable mortality, adjusted for stroke network access",
+      subtitle = "ICAR-smoothed relative risk, travel time to nearest level-II hub"
     )
   ),
 
