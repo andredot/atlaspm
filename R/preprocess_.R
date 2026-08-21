@@ -1,4 +1,4 @@
-#' Preprocess a mortality file down to preventable causes of death
+#' Preprocess a mortality file down to avoidable causes of death
 #'
 #' Starting from a raw mortality table, this keeps only premature deaths
 #' (age under \code{age_threshold}, default 75, following the OECD/Eurostat
@@ -96,7 +96,7 @@ preprocess_mortality <- function(mort_raw,
         TRUE                           ~ NA_character_
       )
     ) |>
-    # 4. append the preventable-cause metadata
+    # 4. append the avoidable-cause metadata
     dplyr::left_join(lookup, by = c("match_key" = "key")) |>
     # 5. keep only the preventable causes (the matched rows)
     dplyr::filter(!is.na(.data[["cause"]])) |>
@@ -818,33 +818,119 @@ validate_lookup <- function(lookup) {
   invisible(lookup)
 }
 
-
-#' One row per decedent, recovered from the fanned-out death table
+#' One row per decedent, with preventability and mechanism as columns
 #'
-#' \code{mort_count} has one row per \emph{death x mechanism}: the 50/50 causes
-#' occupy two rows apiece, so its row count overstates the number of people who
-#' died. Anything describing \strong{decedents} - Table 1, the age and sex
-#' distribution, the total N reported in the abstract - must be built from this
-#' function, and anything describing \strong{deaths attributable to a layer}
-#' must be built by summing \code{weight}.
+#' \code{mort_count} has one row per \emph{death x avoidability arm}: the 50/50
+#' causes occupy two rows apiece, one preventable and one treatable, each with
+#' \code{weight = 0.5}. Its row count therefore overstates the number of people
+#' who died, and de-duplicating it with \code{distinct()} silently discards one
+#' of the two arms.
 #'
-#' The surviving row for a split cause is the \code{Preventable} one by default,
-#' so \code{group} and \code{cause} remain interpretable; \code{mechanism} on
-#' the returned object is \strong{not} meaningful for split causes and is
-#' dropped to prevent it being used by accident.
+#' This function pivots instead of de-duplicating. Every death appears exactly
+#' once, and the information that was spread across rows is moved into columns:
+#' whether the death was preventable, whether it was treatable, and the
+#' mechanism assigned within each arm. Nothing is lost.
 #'
-#' @param mort_count Output of \code{\link{preprocess_mortality}}.
-#' @param keep_type Which side of a split cause to retain. Default
-#'   \code{"Preventable"}.
-#' @return A tibble with one row per \code{death_id}, without the
-#'   \code{mechanism}, \code{type}, \code{weight} and \code{flag} columns.
-#' @importFrom dplyr arrange distinct select any_of desc |>
+#' Use the result for anything describing \strong{decedents}: Table 1, the age
+#' and sex distribution, the total N in the abstract. For anything describing
+#' \strong{deaths attributable to a layer}, keep using \code{mort_count} and sum
+#' \code{weight}, since a 50/50 death contributes half a death to each of two
+#' layers and that is the quantity a layer analysis needs.
+#'
+#' @section Columns added:
+#' \describe{
+#'   \item{\code{preventable}}{Factor, \code{Yes}/\code{No}.}
+#'   \item{\code{treatable}}{Factor, \code{Yes}/\code{No}.}
+#'   \item{\code{avoidability}}{Factor with three levels: \code{Preventable
+#'     only}, \code{Treatable only}, \code{Preventable and treatable}. The last
+#'     is exactly the set of 50/50 causes.}
+#'   \item{\code{mechanism_preventable}}{Factor. The preventive service function
+#'     the death is attributed to, or \code{NA} (or \code{na_label}) if the
+#'     death is not preventable.}
+#'   \item{\code{mechanism_treatable}}{As above, for the treatable arm.}
+#'   \item{\code{mechanism_any}}{Factor. A single mechanism column for
+#'     convenience: the preventable mechanism where one exists, otherwise the
+#'     treatable one. Use this when you want one mechanism per death and are
+#'     content to let the preventable arm take precedence, which is the
+#'     convention the OECD/Eurostat list itself uses.}
+#'   \item{\code{weight_preventable}, \code{weight_treatable}}{The weights, kept
+#'     so that layer totals can be recovered from this table without returning
+#'     to \code{mort_count}.}
+#' }
+#' Column labels are attached with \code{attr(x, "label")}, so
+#' \code{gtsummary::tbl_summary()} picks them up without a \code{label}
+#' argument.
+#'
+#' @param mort_count Output of \code{\link{preprocess_mortality}}, with a
+#'   \code{death_id} assigned before the 50/50 fan-out.
+#' @param type_col Name of the column distinguishing the preventable from the
+#'   treatable arm. Default \code{"type"}. Values are matched case-insensitively
+#'   against \code{"preventable"} and \code{"treatable"}.
+#' @param na_label Optional string used in place of \code{NA} in the two
+#'   mechanism columns, e.g. \code{"Not applicable"}. Supplying it stops
+#'   \code{gtsummary} reporting those cells as \code{Unknown}, which is
+#'   misleading: the mechanism is not missing, it does not exist for that death.
+#'   Default \code{NULL} keeps \code{NA}.
+#'
+#' @return A tibble with one row per \code{death_id}.
+#'
+#' @examples
+#' \dontrun{
+#' deaths <- build_deaths(mort_count, na_label = "Not applicable")
+#'
+#' # Table 1 over decedents. Labels come from the attributes.
+#' deaths |>
+#'   dplyr::select(sesso, eta, group, cause, avoidability,
+#'                 mechanism_preventable) |>
+#'   dplyr::mutate(cause = forcats::fct_lump_n(cause, 15)) |>
+#'   gtsummary::tbl_summary(
+#'     by = avoidability,
+#'     missing = "no"
+#'   ) |>
+#'   gtsummary::add_overall() |>
+#'   gtsummary::bold_labels()
+#'
+#' # Mechanism distribution among preventable deaths only
+#' deaths |>
+#'   dplyr::filter(preventable == "Yes") |>
+#'   dplyr::select(mechanism_preventable, sesso, eta) |>
+#'   gtsummary::tbl_summary(by = mechanism_preventable)
+#'
+#' # Layer totals still come from the weights, and agree with mort_count
+#' deaths |>
+#'   dplyr::count(mechanism_preventable, wt = weight_preventable)
+#' }
+#'
+#' @importFrom dplyr arrange distinct select any_of all_of mutate across if_else
+#' @importFrom dplyr left_join n_distinct group_by summarise filter pull |>
+#' @importFrom tidyr pivot_wider replace_na
+#' @importFrom rlang .data
 #' @export
-build_deaths <- function(mort_count, keep_type = "Preventable") {
+build_deaths <- function(mort_count,
+                         type_col = "type",
+                         na_label = NULL) {
 
-  stopifnot("death_id" %in% names(mort_count))
+  # ---- validation ---------------------------------------------------------
 
-  n_deaths <- length(unique(mort_count$death_id))
+  if (!"death_id" %in% names(mort_count)) {
+    stop("`mort_count` has no `death_id`. Assign it in preprocess_mortality() ",
+         "BEFORE the 50/50 fan-out, otherwise the two arms of a split cause ",
+         "cannot be recognised as the same death.", call. = FALSE)
+  }
+  if (!type_col %in% names(mort_count)) {
+    stop("`mort_count` has no `", type_col, "` column, so the preventable and ",
+         "treatable arms cannot be told apart. Check that the lookup carries ",
+         "a `type` column and that preprocess_mortality() retains it.",
+         call. = FALSE)
+  }
+  if (!"mechanism" %in% names(mort_count)) {
+    stop("`mort_count` has no `mechanism` column.", call. = FALSE)
+  }
+  if (!"weight" %in% names(mort_count)) {
+    stop("`mort_count` has no `weight` column.", call. = FALSE)
+  }
+
+  n_deaths <- dplyr::n_distinct(mort_count$death_id)
   w_total  <- sum(mort_count$weight)
   if (abs(w_total - n_deaths) > 1e-6) {
     stop("sum(weight) = ", w_total, " but there are ", n_deaths,
@@ -852,9 +938,142 @@ build_deaths <- function(mort_count, keep_type = "Preventable") {
          "or a death_id was assigned after the lookup join.", call. = FALSE)
   }
 
-  mort_count |>
-    dplyr::arrange(.data[["death_id"]],
-                   dplyr::desc(.data[["type"]] == keep_type)) |>
+  arm <- tolower(trimws(as.character(mort_count[[type_col]])))
+  bad <- setdiff(unique(arm), c("preventable", "treatable"))
+  if (length(bad)) {
+    stop("Unexpected value(s) in `", type_col, "`: ",
+         paste(shQuote(bad), collapse = ", "),
+         ". Expected only 'preventable' and 'treatable'.", call. = FALSE)
+  }
+
+  dup <- mort_count |>
+    dplyr::mutate(.arm = arm) |>
+    dplyr::count(.data[["death_id"]], .data[[".arm"]]) |>
+    dplyr::filter(.data[["n"]] > 1L)
+  if (nrow(dup)) {
+    stop(nrow(dup), " death_id x arm combination(s) appear more than once, ",
+         "e.g. death_id ", dup$death_id[1], ". Each death should have at most ",
+         "one preventable row and one treatable row.", call. = FALSE)
+  }
+
+  # Columns that vary within a death (the fanned-out ones) versus those that
+  # identify the decedent. Anything not in `arm_cols` must be constant within
+  # death_id; if it is not, distinct() below would pick arbitrarily.
+  arm_cols  <- c("mechanism", type_col, "weight", "flag")
+  base_cols <- setdiff(names(mort_count), arm_cols)
+
+  inconstant <- mort_count |>
+    dplyr::group_by(.data[["death_id"]]) |>
+    dplyr::summarise(
+      dplyr::across(dplyr::all_of(setdiff(base_cols, "death_id")),
+                    ~ dplyr::n_distinct(.x, na.rm = FALSE) > 1L),
+      .groups = "drop"
+    ) |>
+    dplyr::select(-dplyr::all_of("death_id"))
+  offenders <- names(inconstant)[vapply(inconstant, any, logical(1))]
+  if (length(offenders)) {
+    stop("These columns vary within a single death_id and would be resolved ",
+         "arbitrarily: ", paste(offenders, collapse = ", "),
+         ". Add them to the fan-out handling or drop them before calling ",
+         "build_deaths().", call. = FALSE)
+  }
+
+  # ---- one row per decedent ----------------------------------------------
+
+  base <- mort_count |>
+    dplyr::arrange(.data[["death_id"]]) |>
     dplyr::distinct(.data[["death_id"]], .keep_all = TRUE) |>
-    dplyr::select(-dplyr::any_of(c("mechanism", "type", "weight", "flag")))
+    dplyr::select(dplyr::all_of(base_cols))
+
+  # ---- pivot the arm-varying columns to wide ------------------------------
+
+  wide <- mort_count |>
+    dplyr::mutate(.arm = arm) |>
+    dplyr::select(dplyr::all_of(c("death_id", ".arm", "mechanism", "weight"))) |>
+    tidyr::pivot_wider(
+      id_cols     = dplyr::all_of("death_id"),
+      names_from  = ".arm",
+      values_from = dplyr::all_of(c("mechanism", "weight")),
+      names_glue  = "{.value}_{.arm}"
+    )
+
+  # pivot_wider omits a column entirely if no death has that arm
+  for (nm in c("mechanism_preventable", "mechanism_treatable")) {
+    if (!nm %in% names(wide)) wide[[nm]] <- NA_character_
+  }
+  for (nm in c("weight_preventable", "weight_treatable")) {
+    if (!nm %in% names(wide)) wide[[nm]] <- NA_real_
+  }
+
+  mech_levels <- sort(unique(stats::na.omit(as.character(mort_count$mechanism))))
+
+  out <- base |>
+    dplyr::left_join(wide, by = "death_id") |>
+    dplyr::mutate(
+      preventable = factor(
+        dplyr::if_else(is.na(.data[["mechanism_preventable"]]), "No", "Yes"),
+        levels = c("No", "Yes")
+      ),
+      treatable = factor(
+        dplyr::if_else(is.na(.data[["mechanism_treatable"]]), "No", "Yes"),
+        levels = c("No", "Yes")
+      ),
+      avoidability = factor(
+        dplyr::case_when(
+          !is.na(.data[["mechanism_preventable"]]) &
+            !is.na(.data[["mechanism_treatable"]]) ~ "Preventable and treatable",
+          !is.na(.data[["mechanism_preventable"]]) ~ "Preventable only",
+          !is.na(.data[["mechanism_treatable"]])   ~ "Treatable only"
+        ),
+        levels = c("Preventable only", "Treatable only",
+                   "Preventable and treatable")
+      ),
+      mechanism_any = factor(
+        dplyr::coalesce(.data[["mechanism_preventable"]],
+                        .data[["mechanism_treatable"]]),
+        levels = mech_levels
+      ),
+      mechanism_preventable = factor(.data[["mechanism_preventable"]],
+                                     levels = mech_levels),
+      mechanism_treatable   = factor(.data[["mechanism_treatable"]],
+                                     levels = mech_levels),
+      weight_preventable = tidyr::replace_na(.data[["weight_preventable"]], 0),
+      weight_treatable   = tidyr::replace_na(.data[["weight_treatable"]], 0)
+    )
+
+  # Explicit level instead of NA, so gtsummary does not report "Unknown" for
+  # cells where the mechanism does not exist rather than being missing.
+  if (!is.null(na_label)) {
+    out <- out |>
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::all_of(c("mechanism_preventable", "mechanism_treatable")),
+          ~ forcats::fct_na_value_to_level(.x, level = na_label)
+        )
+      )
+  }
+
+  # ---- post-conditions ----------------------------------------------------
+
+  stopifnot(nrow(out) == n_deaths)
+  stopifnot(!any(is.na(out$avoidability)))
+  stopifnot(
+    abs(sum(out$weight_preventable) + sum(out$weight_treatable) - n_deaths) < 1e-6
+  )
+
+  # ---- labels for gtsummary ----------------------------------------------
+
+  labs <- c(
+    preventable           = "Preventable",
+    treatable             = "Treatable",
+    avoidability          = "Avoidability category",
+    mechanism_preventable = "Preventive service function",
+    mechanism_treatable   = "Treatment service function",
+    mechanism_any         = "Service function"
+  )
+  for (nm in names(labs)) {
+    if (nm %in% names(out)) attr(out[[nm]], "label") <- unname(labs[nm])
+  }
+
+  out
 }

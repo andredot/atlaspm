@@ -4,7 +4,7 @@ library(crew)  # parallel computing
 
 controller <- crew::crew_controller_local(
   name = "atlaspm_controller",
-  workers = 1
+  workers = 4
 )
 
 # Set target-specific options such as packages.
@@ -57,7 +57,7 @@ list(
                                               age_col = "eta")),
   tar_target(mort_count_area,
              dplyr::filter(mort_count, area_residenza %in% area_shp$area)),
-  # one row per decedent - Table 1 and the reported N come from here,
+  # one row per decedent Table 1 and the reported N come from here,
   # never from nrow(mort_count)
   tar_target(deaths, build_deaths(mort_count)),
   tar_target(deaths_area, build_deaths(mort_count_area)),
