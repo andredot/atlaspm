@@ -3,12 +3,20 @@ title: "Atlas of avoidable mortality — Results, for the thesis"
 subtitle: "Generated from the `targets` pipeline. Do not edit by hand."
 date: today
 format:
-  gfm:
+  html:
+    theme: cosmo
     toc: true
     toc-depth: 3
+    toc-location: left
+    toc-title: "Sections"
+    embed-resources: true
     fig-width: 7.5
     fig-height: 6
+    fig-align: center
+    tbl-cap-location: top
     df-print: kable
+    code-tools: false
+    link-external-newwindow: true
 execute:
   echo: false
   warning: false

@@ -85,23 +85,15 @@ collect_coefficients <- function(fits,
                                  probs        = c(0.025, 0.975)) {
 
   one <- function(fit, lab) {
-    sp    <- tryCatch(model_spec(fit), error = function(e) NULL)
-    covs  <- if (is.null(sp)) character(0) else sp$covariates
-    smry  <- rstan::summary(fit$stanfit, probs = probs)$summary
-    betas <- grep("^beta\\[", rownames(smry), value = TRUE)
+    sp   <- tryCatch(model_spec(fit), error = function(e) NULL)
+    covs <- if (is.null(sp)) character(0) else sp$covariates
 
-    if (!length(betas)) return(NULL)
+    # An intercept-only model (M1, M3) legitimately has nothing to report.
+    if (!length(covs)) return(NULL)
 
-    if (length(covs) == length(betas)) {
-      term <- covs
-    } else {
-      # Never guess. An unlabelled coefficient in a thesis table is worse than
-      # an obviously unlabelled one.
-      warning("Model '", lab, "' has ", length(betas), " coefficient(s) but ",
-              length(covs), " known covariate name(s); leaving them as ",
-              "beta[k].", call. = FALSE)
-      term <- betas
-    }
+    betas <- .beta_pars(fit, covs)
+    smry  <- rstan::summary(fit$stanfit, pars = betas, probs = probs)$summary
+    term  <- covs
 
     lo <- sprintf("%g%%", 100 * probs[1])
     hi <- sprintf("%g%%", 100 * probs[2])
@@ -122,12 +114,14 @@ collect_coefficients <- function(fits,
   }
 
   out <- do.call(rbind, Map(one, fits, names(fits)))
-  if (is.null(out)) {
-    return(tibble::tibble(model = character(), term = character(),
-                          label = character(), estimate = numeric(),
-                          ci_low = numeric(), ci_high = numeric(),
-                          rhat = numeric(), ess = numeric(),
-                          crosses_null = logical()))
+
+  if (is.null(out) || !nrow(out)) {
+    stop("No coefficients were recovered from any of: ",
+         paste(names(fits), collapse = ", "),
+         ". Either every model is intercept-only, or the fits carry no ",
+         "`atlaspm_spec` (were they built by fit_model()?). Returning an ",
+         "empty table here would only move the failure downstream into the ",
+         "figures.", call. = FALSE)
   }
 
   null_value <- if (exponentiate) 1 else 0

@@ -4,7 +4,7 @@ library(crew)  # parallel computing
 
 controller <- crew::crew_controller_local(
   name = "atlaspm_controller",
-  workers = 4
+  workers = 2
 )
 
 tar_option_set(
@@ -310,9 +310,9 @@ list(
   tar_target(pareto_audit, pareto_k_summary(loo_comparison, smr_geo_full,
                                             model = "M5")),
   tar_target(moran_residual,
-             dplyr::bind_rows(M1 = moran_M1, M2 = moran_M2, M3 = moran_M3,
-                              M4 = moran_M4, M5 = moran_M5, M6 = moran_M6,
-                              M7 = moran_M7, .id = "model")),
+             stack_by_model(list(M1 = moran_M1, M2 = moran_M2, M3 = moran_M3,
+                                 M4 = moran_M4, M5 = moran_M5, M6 = moran_M6,
+                                 M7 = moran_M7))),
 
   # === THE ESTIMAND ========================================================
   tar_target(excess, residual_excess(fit_M5, smr_geo_full,
@@ -393,7 +393,8 @@ list(
                subtitle  = "Each point one areal unit")),
 
   # === DESCRIPTIVES AND TABLES =============================================
-  tar_target(desc_numbers, desc_stats(deaths_area, n_years = N_YEARS)),
+  tar_target(desc_numbers, desc_stats(deaths_area, arms = death_arms,
+                                      n_years = N_YEARS)),
   tar_target(table_one, tbl_one(deaths_area)),
   tar_target(appendix_b, tbl_lookup(lookup_causes)),
   tar_target(appendix_b_adapted, tbl_lookup(lookup_causes,
