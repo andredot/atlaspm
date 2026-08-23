@@ -224,7 +224,8 @@ list(
         "Policlinico San Marco Zingonia"          = c(45.60409, 9.5911),
         "Istituto Clinico S. Anna"                = c(45.55361, 10.18027),
         "Fondazione IRCCS Policlinico San Matteo" = c(45.19622, 9.14884),
-        "Ospedale G. Salvini"                     = c(45.58284, 9.09504)
+        "Ospedale G. Salvini"                     = c(45.58284, 9.09504),
+        "Ospedale di Chiari"                      = c(45.53827, 9.93333)
       )
     )
   ),
@@ -382,6 +383,10 @@ list(
                              title = NULL)),
   tar_target(fig_mech_exceedance, plot_exceedance_facets(smr_geo_mech_bym2)),
   tar_target(fig_concordance, plot_concordance(mechanism_concordance)),
+  tar_target(fig_pollution_pair, plot_pollution_pair(smr_geo_full)),
+  tar_target(fig_pollution_shared,
+             plot_pollution_pair(smr_geo_full, shared_scale = TRUE)),
+
   tar_target(scatter_cmr_isr_overall, plot_cmr_isr(mort_crude, mort_smr)),
   tar_target(scatter_smr_di,
              plot_scatter_smr_index(
@@ -403,6 +408,117 @@ list(
 
   # === REPORT ==============================================================
   tar_quarto(thesis_results, path = file.path("reports", "thesis_results.qmd")),
+
+  # ==========================================================================
+  # APPENDIX C: DEPRIVATION STABILITY, 2011 vs 2023
+  # ==========================================================================
+  tar_target(census_2011,
+             get_input_data_path("census_2011") |> import_census_2011()),
+  tar_target(sez_shp_2011,
+             get_input_data_path("geodata/R03_11/R03_11_WGS84.shp") |>
+               sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
+  tar_target(section_xwalk_2011,
+             build_section_area_xwalk(sez_shp_2011, area_shp,
+                                      sez_key = "SEZ2011")),
+  tar_target(deprivation_2011,
+             build_deprivation(census_2011, section_xwalk_2011,
+                               sez_key = "SEZ2011", vintage = "2011")),
+  tar_target(deprivation_stability,
+             check_deprivation_stability(deprivation_2011, deprivation_area)),
+
+  # ==========================================================================
+  # STROKE SUB-MODEL (Objective 3)
+  # ==========================================================================
+  tar_target(
+    tracer_exposures,
+    list(
+      `Hub (SU II): thrombectomy and neurosurgery` = control_fits$tracer,
+      `Any accredited stroke centre (SU I or II)`  = fit_model(
+        smr_geo_tracer, rhs = "t_centre_mean_z", engine = "bym2",
+        C = C_matrix, scale_factor = scale_factor,
+        obs_col = "cvd_obs", exp_col = "cvd_exp", refresh = 0)
+    )
+  ),
+  tar_target(tracer_exposure_table,
+             collect_coefficients(tracer_exposures, term_labels = TERM_LABELS)),
+
+  # Specification sensitivity: the exposure is a smooth spatial surface and so
+  # is the BYM2 random effect. When two terms describe the same variation the
+  # coefficient is pulled toward zero whether or not an effect exists.
+  tar_target(
+    tracer_engines,
+    list(
+      `No spatial term (GLM)` = fit_model(
+        smr_geo_tracer, rhs = "t_hub_mean_z", engine = "glm",
+        obs_col = "cvd_obs", exp_col = "cvd_exp", refresh = 0),
+      `BYM2` = control_fits$tracer,
+      `ESF`  = fit_model(
+        smr_geo_tracer, rhs = "t_hub_mean_z", engine = "esf", C = C_matrix,
+        obs_col = "cvd_obs", exp_col = "cvd_exp", refresh = 0)
+    )
+  ),
+  tar_target(tracer_engine_table,
+             collect_coefficients(tracer_engines, term_labels = TERM_LABELS)),
+
+  tar_target(exposure_contrast_table,
+             exposure_contrast(smr_geo_full, C = C_matrix)),
+  tar_target(tracer_per_10min,
+             mde_per_unit(control_fits$tracer, smr_geo_tracer,
+                          "t_hub_mean", per = 10)),
+  tar_target(i63_all_ages,
+             build_icd_outcome(mort_raw, pop_area_table, area_shp$area,
+                               prefixes = "I63", label = "i63",
+                               pop_year = STUDY_YEARS)),
+  tar_target(cvd_all_ages,
+             build_icd_outcome(mort_raw, pop_area_table, area_shp$area,
+                               prefixes = paste0("I6", 0:9), label = "cvdall",
+                               pop_year = STUDY_YEARS)),
+  tar_target(haem_under75,
+             build_icd_outcome(mort_raw, pop_area_table, area_shp$area,
+                               prefixes = c("I60", "I61", "I62"),
+                               age_max = 74, label = "haem",
+                               pop_year = STUDY_YEARS)),
+
+  # Feasibility BEFORE fitting. A BYM2 on a surface that is zero across most
+  # units estimates the prior, not the data.
+  tar_target(outcome_feasibility_table,
+             dplyr::bind_rows(
+               outcome_feasibility(i63_all_ages, "i63"),
+               outcome_feasibility(cvd_all_ages, "cvdall"),
+               outcome_feasibility(haem_under75, "haem")
+             )),
+
+  tar_target(
+    smr_geo_allage,
+    sf::st_as_sf(smr_geo_tracer) |>
+      dplyr::left_join(i63_all_ages, by = "area") |>
+      dplyr::left_join(cvd_all_ages, by = "area") |>
+      dplyr::left_join(haem_under75, by = "area")
+  ),
+
+  tar_target(
+    allage_fits,
+    list(
+      `I63 all ages ~ hub`    = fit_model(
+        smr_geo_allage, rhs = "t_hub_mean_z", engine = "bym2",
+        C = C_matrix, scale_factor = scale_factor,
+        obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0),
+      `I63 all ages ~ centre` = fit_model(
+        smr_geo_allage, rhs = "t_centre_mean_z", engine = "bym2",
+        C = C_matrix, scale_factor = scale_factor,
+        obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0),
+      `All cerebrovascular, all ages ~ hub` = fit_model(
+        smr_geo_allage, rhs = "t_hub_mean_z", engine = "bym2",
+        C = C_matrix, scale_factor = scale_factor,
+        obs_col = "cvdall_obs", exp_col = "cvdall_exp", refresh = 0)
+    )
+  ),
+  tar_target(allage_table,
+             collect_coefficients(allage_fits, term_labels = TERM_LABELS)),
+  tar_target(allage_diagnostics, collect_diagnostics(allage_fits)),
+
+  # --- the stroke report ----------------------------------------------------
+  tar_quarto(stroke_results, path = file.path("reports", "stroke_results.qmd")),
 
   tar_target(JustDontCareLastComma, NULL)
 )

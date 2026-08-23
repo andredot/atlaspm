@@ -1,0 +1,480 @@
+# Stroke sub-model reporting helpers -------------------------------------------
+#
+# Everything the stroke report needs that is not already produced by
+# R/stroke.R. Kept separate because these are presentation and diagnosis, not
+# construction: they do not build the exposure, they interrogate it.
+#
+# The question they exist to answer is not "is there an association" but "could
+# this design have detected one". A null result from an exposure with no
+# contrast is not evidence of no effect, and the two are indistinguishable in a
+# coefficient table.
+
+
+#' Stroke centre table for visual verification
+#'
+#' Every centre with its coordinates, how it was geocoded, and a link that
+#' opens the exact point on a map. Geocoding is the step in this pipeline most
+#' likely to be silently wrong - a facility resolved to the wrong side of a
+#' city changes the catchment of every area around it - and the only reliable
+#' check is a human looking at the pin.
+#'
+#' The DGR node list gives a comune, not a street address, so the coordinate
+#' and the map link are the address for verification purposes.
+#'
+#' @param centres `sf` from [geocode_stroke_centres()].
+#' @param link Whether to include a map URL column. Default `TRUE`.
+#' @param zoom Zoom level for the link.
+#'
+#' @return A tibble ordered hubs first, then by comune.
+#' @examples
+#' \dontrun{
+#' stroke_centre_table(tar_read(stroke_centres))
+#' }
+#' @export
+stroke_centre_table <- function(centres, link = TRUE, zoom = 17) {
+
+  xy <- sf::st_coordinates(sf::st_as_sf(centres))
+  tab <- sf::st_drop_geometry(centres)
+
+  out <- tibble::tibble(
+    centre_id = tab[["centre_id"]],
+    facility  = tab[["facility"]],
+    level     = ifelse(tab[["is_hub"]], "Hub (SU II, thrombectomy)",
+                       "Spoke (SU I)"),
+    ente      = if ("ente" %in% names(tab)) tab[["ente"]] else NA_character_,
+    comune    = tab[["comune"]],
+    provincia = tab[["provincia"]],
+    lat       = round(xy[, 2], 5),
+    lon       = round(xy[, 1], 5),
+    source    = if ("geocode_source" %in% names(tab))
+      tab[["geocode_source"]] else NA_character_
+  )
+
+  if (link) {
+    out[["map"]] <- sprintf(
+      "[check](https://www.openstreetmap.org/?mlat=%.5f&mlon=%.5f#map=%d/%.5f/%.5f)",
+      out[["lat"]], out[["lon"]], zoom, out[["lat"]], out[["lon"]]
+    )
+  }
+
+  out[order(!grepl("^Hub", out[["level"]]), out[["comune"]]), , drop = FALSE]
+}
+
+
+#' Does the exposure have enough contrast to detect anything?
+#'
+#' The first question to ask of a null result, and the one a coefficient table
+#' cannot answer. If every area in the study sits within the therapeutic window,
+#' there is no exposure gradient, and no amount of modelling will find one.
+#'
+#' Reports the spread of each accessibility measure, how many areas and how much
+#' population fall beyond clinically meaningful thresholds, and how spatially
+#' smooth the exposure is - the last because a smooth exposure competes with the
+#' BYM2 random effect for the same variation, which is a separate reason a
+#' coefficient can be driven toward zero.
+#'
+#' @param geo Modelling `sf` carrying the accessibility columns.
+#' @param C Adjacency matrix, for the smoothness diagnostic. Optional.
+#' @param thresholds Minute thresholds to count areas beyond.
+#' @param vars Accessibility columns to summarise.
+#'
+#' @return A tibble, one row per measure.
+#' @seealso [mde_per_unit()]
+#' @export
+exposure_contrast <- function(geo,
+                              C = NULL,
+                              thresholds = c(30, 45, 60),
+                              vars = c("t_centre_mean", "t_hub_mean",
+                                       "t_hub_p90")) {
+
+  tab  <- sf::st_drop_geometry(geo)
+  vars <- vars[vars %in% names(tab)]
+  if (!length(vars)) {
+    stop("No accessibility columns found in `geo`.", call. = FALSE)
+  }
+  pop <- if ("population" %in% names(tab)) tab[["population"]] else
+    rep(1, nrow(tab))
+
+  rows <- lapply(vars, function(v) {
+    x <- as.numeric(tab[[v]])
+    q <- stats::quantile(x, c(0.05, 0.25, 0.5, 0.75, 0.95), na.rm = TRUE,
+                         names = FALSE)
+
+    thr <- vapply(thresholds, function(t) sum(x > t, na.rm = TRUE), numeric(1))
+    pthr <- vapply(thresholds, function(t) {
+      100 * sum(pop[x > t], na.rm = TRUE) / sum(pop, na.rm = TRUE)
+    }, numeric(1))
+
+    moran <- if (!is.null(C)) {
+      tryCatch(moran_test_raw(x, C, nsim = 999)$statistic,
+               error = function(e) NA_real_)
+    } else NA_real_
+
+    out <- tibble::tibble(
+      measure = v,
+      min     = min(x, na.rm = TRUE),
+      p05     = q[1], p25 = q[2], median = q[3], p75 = q[4], p95 = q[5],
+      max     = max(x, na.rm = TRUE),
+      iqr     = q[4] - q[2],
+      sd      = stats::sd(x, na.rm = TRUE),
+      # The ratio that matters: an SD of 3 minutes across a 20-minute range
+      # means the "per SD" coefficient is describing a clinically trivial
+      # contrast, however tight its interval looks.
+      range_min = max(x, na.rm = TRUE) - min(x, na.rm = TRUE),
+      moran_i   = moran
+    )
+    for (i in seq_along(thresholds)) {
+      out[[paste0("n_over_", thresholds[i])]]   <- thr[i]
+      out[[paste0("pct_pop_over_", thresholds[i])]] <- pthr[i]
+    }
+    out
+  })
+
+  do.call(rbind, rows)
+}
+
+
+#' Re-express a standardised coefficient in clinical units
+#'
+#' A coefficient "per standard deviation" is uninterpretable when the reader
+#' needs to know what a ten-minute delay does. Worse, it disguises a
+#' range-restriction problem: an SD of two minutes makes a null look like
+#' strong evidence of no effect, when it is really evidence about a contrast
+#' nobody cares about.
+#'
+#' Converts the posterior to a relative risk per `per` units of the raw
+#' covariate, and reports the largest effect the data can rule out - the upper
+#' credible bound - which is the honest way to present a null.
+#'
+#' @param fit A fitted model.
+#' @param geo The `sf` it was fitted to.
+#' @param var Raw (unstandardised) covariate column, e.g. `"t_hub_mean"`.
+#' @param z_var The standardised column actually in the model. Derived by
+#'   appending `_z` when `NULL`.
+#' @param per Units of `var` to express the effect per. Default `10`.
+#' @param probs Credible-interval bounds.
+#'
+#' @return A one-row tibble.
+#' @examples
+#' \dontrun{
+#' mde_per_unit(control_fits$tracer, smr_geo_tracer, "t_hub_mean", per = 10)
+#' }
+#' @export
+mde_per_unit <- function(fit, geo, var, z_var = NULL, per = 10,
+                         probs = c(0.025, 0.975)) {
+
+  if (is.null(z_var)) z_var <- paste0(var, "_z")
+  require_cols(geo, c(var, z_var), "geo")
+
+  sd_raw <- stats::sd(sf::st_drop_geometry(geo)[[var]], na.rm = TRUE)
+  draws  <- as.numeric(as.matrix(fit$stanfit, pars = .beta_pars(fit, z_var)))
+
+  # beta is per 1 SD of the raw variable; convert to per `per` raw units.
+  b <- draws * (per / sd_raw)
+  q <- stats::quantile(b, probs = probs, names = FALSE)
+
+  tibble::tibble(
+    variable   = var,
+    per        = per,
+    sd_raw     = sd_raw,
+    rr         = exp(mean(b)),
+    ci_low     = exp(q[1]),
+    ci_high    = exp(q[2]),
+    # The largest effect compatible with the data, in either direction.
+    rules_out_above = exp(max(abs(q))),
+    p_direction = max(mean(b > 0), mean(b < 0))
+  )
+}
+
+
+#' Map the stroke network over the study area
+#'
+#' @param area_shp Modelling geography.
+#' @param centres `sf` of stroke centres.
+#' @param caption Passed to `labs()`.
+#' @return A ggplot.
+#' @export
+plot_stroke_centres <- function(area_shp, centres, caption = NULL) {
+
+  a <- sf::st_as_sf(area_shp)
+  p <- sf::st_as_sf(centres) |> sf::st_transform(sf::st_crs(a))
+  p[["Level"]] <- ifelse(p[["is_hub"]], "Hub (thrombectomy)", "Spoke")
+
+  ggplot2::ggplot() +
+    ggplot2::geom_sf(data = a, fill = "grey94", colour = "white",
+                     linewidth = 0.2) +
+    ggplot2::geom_sf(data = p,
+                     ggplot2::aes(shape = .data[["Level"]],
+                                  fill = .data[["Level"]]),
+                     size = 2.6, colour = "grey15", stroke = 0.4) +
+    ggplot2::scale_shape_manual(values = c("Hub (thrombectomy)" = 24,
+                                           "Spoke" = 21)) +
+    ggplot2::scale_fill_manual(values = c("Hub (thrombectomy)" = "#8c2d04",
+                                          "Spoke" = "white")) +
+    ggplot2::labs(caption = caption) +
+    theme_atlas(map = TRUE)
+}
+
+
+#' Map a travel-time surface
+#'
+#' @param geo Modelling `sf`.
+#' @param value Column to map.
+#' @param centres Optional `sf` of centres to overlay.
+#' @param legend_title,caption Labels.
+#' @return A ggplot.
+#' @export
+plot_travel_time <- function(geo, value = "t_hub_mean", centres = NULL,
+                             legend_title = "Minutes", caption = NULL) {
+
+  g <- sf::st_as_sf(geo)
+  require_cols(g, value, "geo")
+
+  p <- ggplot2::ggplot(g) +
+    ggplot2::geom_sf(ggplot2::aes(fill = .data[[value]]), colour = NA) +
+    ggplot2::scale_fill_viridis_c(option = "cividis", direction = -1,
+                                  name = legend_title)
+
+  if (!is.null(centres)) {
+    cen <- sf::st_as_sf(centres) |> sf::st_transform(sf::st_crs(g))
+    p <- p +
+      ggplot2::geom_sf(data = cen[cen[["is_hub"]], ], shape = 24,
+                       fill = "#d94801", colour = "grey10", size = 2.2)
+  }
+
+  p + ggplot2::labs(caption = caption) + theme_atlas(map = TRUE)
+}
+
+
+#' Scatter of the tracer outcome against the exposure, before any model
+#'
+#' The plot to look at before believing a coefficient. If there is no
+#' relationship visible here, a null coefficient is unsurprising; if there is
+#' one here but not in the model, the spatial term has absorbed it, and that is
+#' a different problem with a different remedy.
+#'
+#' @param geo Modelling `sf` with `cvd_obs` / `cvd_exp` attached.
+#' @param x Exposure column.
+#' @param caption Passed to `labs()`.
+#' @return A ggplot.
+#' @export
+plot_tracer_raw <- function(geo, x = "t_hub_mean", caption = NULL) {
+
+  tab <- sf::st_drop_geometry(geo)
+  require_cols(tab, c(x, "cvd_obs", "cvd_exp"), "geo")
+
+  d <- data.frame(
+    x   = as.numeric(tab[[x]]),
+    smr = tab[["cvd_obs"]] / tab[["cvd_exp"]],
+    w   = tab[["cvd_exp"]]
+  )
+  rho <- stats::cor(d$x, d$smr, method = "spearman", use = "complete.obs")
+
+  ggplot2::ggplot(d, ggplot2::aes(x = .data[["x"]], y = .data[["smr"]])) +
+    ggplot2::geom_hline(yintercept = 1, linetype = "22", colour = "grey45") +
+    ggplot2::geom_point(ggplot2::aes(size = .data[["w"]]), alpha = 0.5,
+                        colour = "#8c2d04") +
+    ggplot2::geom_smooth(method = "loess", formula = y ~ x, se = TRUE,
+                         colour = "grey25", linewidth = 0.6) +
+    ggplot2::scale_size_area(name = "Expected deaths", max_size = 5) +
+    ggplot2::labs(
+      x = "Population-weighted travel time (minutes)",
+      y = "Cerebrovascular SMR (observed / expected)",
+      subtitle = sprintf("Spearman rank correlation = %.3f", rho),
+      caption = caption
+    ) +
+    theme_atlas()
+}
+
+
+# All-age outcomes from the raw register ---------------------------------------
+#
+# The avoidable-mortality frame stops at 75 because that is what the
+# OECD/Eurostat definition specifies. That restriction is right for the study's
+# primary outcome and wrong for a tracer: an ischaemic stroke at 90 is as
+# treatable as one at 60, and excluding it discards most of the events the
+# exposure could plausibly act on. These functions go back to the register.
+
+
+#' Build an indirectly standardised outcome for an arbitrary ICD set
+#'
+#' Bypasses the avoidable-cause lookup entirely and standardises a chosen set of
+#' ICD-10 prefixes over any age range, against the same population denominator
+#' the rest of the study uses.
+#'
+#' The standard is internal, as elsewhere: age-sex specific rates are computed
+#' across the whole study territory and applied to each area's own age-sex
+#' structure. The expected counts are therefore on the same footing as
+#' `total_exp`, and the resulting SMRs are comparable with the main analysis
+#' even though the age range differs.
+#'
+#' @param mort_raw Output of [import_mortality()] - the unfiltered register,
+#'   before [preprocess_mortality()] applies the age and cause restrictions.
+#' @param pop_area_table Population by area, age, sex and year.
+#' @param areas Character vector of study areas to retain.
+#' @param prefixes ICD-10 prefixes to match, e.g. `"I63"` or `c("I60","I61")`.
+#'   Matched against the leading characters of the normalised cause code, so
+#'   `"I63"` captures I63.0 through I63.9.
+#' @param age_min,age_max Age range, inclusive. Defaults to all ages.
+#' @param pop_year Years to sum for person-years.
+#' @param label Stem for the output columns.
+#'
+#' @return A tibble: `area`, `<label>_obs`, `<label>_exp`, `<label>_smr`.
+#'   Attributes record the definition used.
+#'
+#' @examples
+#' \dontrun{
+#' i63 <- build_icd_outcome(mort_raw, pop_area_table, area_shp$area,
+#'                          prefixes = "I63", label = "i63")
+#' }
+#' @seealso [outcome_feasibility()], [preprocess_smr()]
+#' @export
+build_icd_outcome <- function(mort_raw, pop_area_table, areas,
+                              prefixes,
+                              age_min  = 0,
+                              age_max  = Inf,
+                              pop_year = 2022:2024,
+                              label    = "outcome") {
+
+  require_cols(mort_raw, c("causa", "eta", "sesso", "area_residenza"),
+               "mort_raw")
+  require_cols(pop_area_table, c("area", "Eta", "sesso", "anno", "numero"),
+               "pop_area_table")
+
+  # Same normalisation as preprocess_mortality(): strip punctuation, upcase,
+  # then match on the leading characters. Doing it differently here would let
+  # the tracer and the main outcome disagree about what an ICD code is.
+  code <- toupper(gsub("[^A-Za-z0-9]", "", as.character(mort_raw[["causa"]])))
+  hit  <- Reduce(`|`, lapply(prefixes, function(p) startsWith(code, p)))
+
+  d <- mort_raw[hit, , drop = FALSE]
+  d <- d[!is.na(d[["eta"]]) &
+           d[["eta"]] >= age_min & d[["eta"]] <= age_max, , drop = FALSE]
+  d <- d[d[["area_residenza"]] %in% areas, , drop = FALSE]
+
+  if (!nrow(d)) {
+    stop("No deaths matched prefix(es) ", paste(prefixes, collapse = ", "),
+         " in ages ", age_min, "-", age_max, ".", call. = FALSE)
+  }
+
+  deaths <- d |>
+    dplyr::mutate(.age = as.integer(.data[["eta"]]),
+                  .sex = as.integer(.data[["sesso"]]),
+                  .area = as.character(.data[["area_residenza"]])) |>
+    dplyr::count(.data[[".area"]], .data[[".age"]], .data[[".sex"]],
+                 name = "obs")
+  names(deaths)[1:3] <- c(".area", ".age", ".sex")
+
+  pop <- check_pop_years(pop_area_table, pop_year) |>
+    dplyr::filter(.data[["anno"]] %in% as.character(pop_year),
+                  .data[["area"]] %in% areas) |>
+    dplyr::mutate(.age = as.integer(.data[["Eta"]]),
+                  .sex = as.integer(.data[["sesso"]]),
+                  .area = as.character(.data[["area"]]),
+                  .pop = as.numeric(.data[["numero"]])) |>
+    dplyr::filter(.data[[".age"]] >= age_min, .data[[".age"]] <= age_max) |>
+    dplyr::group_by(.data[[".area"]], .data[[".age"]], .data[[".sex"]]) |>
+    dplyr::summarise(.pop = sum(.data[[".pop"]], na.rm = TRUE),
+                     .groups = "drop")
+  names(pop)[1:3] <- c(".area", ".age", ".sex")
+
+  assert_sex_alignment(deaths[[".sex"]], pop[[".sex"]])
+
+  # Internal standard: age-sex specific rates across the whole territory.
+  std <- deaths |>
+    dplyr::group_by(.data[[".age"]], .data[[".sex"]]) |>
+    dplyr::summarise(std_deaths = sum(.data[["obs"]]), .groups = "drop") |>
+    dplyr::full_join(
+      pop |>
+        dplyr::group_by(.data[[".age"]], .data[[".sex"]]) |>
+        dplyr::summarise(std_pop = sum(.data[[".pop"]]), .groups = "drop"),
+      by = c(".age", ".sex")
+    ) |>
+    dplyr::mutate(
+      std_deaths = dplyr::coalesce(.data[["std_deaths"]], 0),
+      std_rate   = dplyr::if_else(.data[["std_pop"]] > 0,
+                                  .data[["std_deaths"]] / .data[["std_pop"]], 0)
+    )
+
+  expected <- pop |>
+    dplyr::left_join(std, by = c(".age", ".sex")) |>
+    dplyr::group_by(.data[[".area"]]) |>
+    dplyr::summarise(exp = sum(.data[[".pop"]] * .data[["std_rate"]]),
+                     .groups = "drop")
+
+  observed <- deaths |>
+    dplyr::group_by(.data[[".area"]]) |>
+    dplyr::summarise(obs = sum(.data[["obs"]]), .groups = "drop")
+
+  out <- tibble::tibble(area = areas) |>
+    dplyr::left_join(observed, by = c("area" = ".area")) |>
+    dplyr::left_join(expected, by = c("area" = ".area")) |>
+    dplyr::mutate(
+      obs = dplyr::coalesce(.data[["obs"]], 0),
+      exp = dplyr::coalesce(.data[["exp"]], NA_real_),
+      smr = .data[["obs"]] / .data[["exp"]]
+    )
+
+  names(out) <- c("area", paste0(label, c("_obs", "_exp", "_smr")))
+
+  attr(out, "definition") <- list(
+    prefixes = prefixes, age_min = age_min, age_max = age_max,
+    pop_year = pop_year, n_deaths = sum(observed[["obs"]]),
+    n_areas = length(areas)
+  )
+  message(sprintf(
+    "%s: %d deaths, ICD %s, ages %d-%s, across %d areas.",
+    label, sum(observed[["obs"]]), paste(prefixes, collapse = "/"),
+    age_min, if (is.finite(age_max)) as.character(age_max) else "max",
+    length(areas)))
+
+  out
+}
+
+
+#' Is an outcome dense enough to model at this resolution?
+#'
+#' Answers the question that should precede fitting, not follow it. A BYM2 on a
+#' surface that is zero across most units estimates the prior rather than the
+#' data, and produces a smooth, plausible, uninformative map.
+#'
+#' The thresholds are conventional rather than exact: an expected count below
+#' about 5 is where a Poisson SMR stops behaving, and a majority of zero
+#' observations is where a spatial smoother has nothing left to smooth.
+#'
+#' @param outcome Output of [build_icd_outcome()].
+#' @param label The column stem used.
+#'
+#' @return A one-row tibble with a `verdict` column.
+#' @export
+outcome_feasibility <- function(outcome, label) {
+
+  obs <- outcome[[paste0(label, "_obs")]]
+  exp <- outcome[[paste0(label, "_exp")]]
+  n   <- length(obs)
+
+  pct_zero <- 100 * sum(obs == 0, na.rm = TRUE) / n
+  pct_exp5 <- 100 * sum(exp < 5, na.rm = TRUE) / n
+
+  verdict <- if (pct_zero > 50) {
+    "NOT MODELLABLE - most areas have no events; a spatial model would return the prior"
+  } else if (pct_zero > 30 || pct_exp5 > 75) {
+    "MARGINAL - fit it, but expect wide intervals and read the exceedance map with caution"
+  } else {
+    "MODELLABLE"
+  }
+
+  tibble::tibble(
+    outcome        = label,
+    deaths         = sum(obs, na.rm = TRUE),
+    areas          = n,
+    mean_per_area  = mean(obs, na.rm = TRUE),
+    median_per_area = stats::median(obs, na.rm = TRUE),
+    max_per_area   = max(obs, na.rm = TRUE),
+    n_zero         = sum(obs == 0, na.rm = TRUE),
+    pct_zero       = pct_zero,
+    median_expected = stats::median(exp, na.rm = TRUE),
+    pct_expected_under5 = pct_exp5,
+    verdict        = verdict
+  )
+}
