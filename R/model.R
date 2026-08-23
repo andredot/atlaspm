@@ -559,7 +559,14 @@ print.bym2_comparison <- function(x, digits = 3, ...) {
   print(p, row.names = FALSE)
 
   cat("\nLOO comparison (elpd_loo: higher is better; looic ~ WAIC scale)\n")
-  print(round(x$loo_compare, digits))
+
+  # round() on the whole object fails when loo_compare() returns a data frame
+  # containing character columns, which newer loo versions do (a `model`
+  # column plus diagnostic columns). Round only what is numeric.
+  cmp <- as.data.frame(x$loo_compare, stringsAsFactors = FALSE)
+  num <- vapply(cmp, is.numeric, logical(1))
+  cmp[num] <- lapply(cmp[num], function(z) round(z, digits))
+  print(cmp, row.names = !("model" %in% names(cmp)))
 
   # loo_compare is ordered best-first; row 1 is the reference, rows 2..n hold
   # each other model's elpd difference from the best, with its se.
@@ -570,12 +577,17 @@ print.bym2_comparison <- function(x, digits = 3, ...) {
     else "clear (> 4 SE)"
   }
 
-  best   <- rownames(x$loo_compare)[1]
-  others <- rownames(x$loo_compare)[-1]
+  # Labels live in a `model` column in newer loo, in the rownames in older.
+  labs <- if ("model" %in% names(cmp)) as.character(cmp[["model"]]) else
+    rownames(cmp)
+
+  best   <- labs[1]
+  others <- labs[-1]
   cat(sprintf("\nBest: %s. Each other model vs best:\n", best))
   for (m in others) {
-    ed    <- x$loo_compare[m, "elpd_diff"]
-    se    <- x$loo_compare[m, "se_diff"]
+    i     <- match(m, labs)
+    ed    <- cmp[["elpd_diff"]][i]
+    se    <- cmp[["se_diff"]][i]
     ratio <- if (se > 0) abs(ed) / se else NA_real_
     cat(sprintf("  %-14s elpd_diff = %8.2f (se = %6.2f) | |diff|/se = %4s -> %s\n",
                 m, ed, se,
@@ -594,8 +606,9 @@ print.bym2_comparison <- function(x, digits = 3, ...) {
 #' its own indirectly standardised expected counts, so a smoothed RR of 1 means
 #' "matches the region-wide age-sex expectation for that mechanism".
 #' geostan's Poisson response must be integer; split-cause weights (0.5) make
-#' M_*_obs fractional, so it's rounded to the nearest integer and
-#' shift is reported.
+#' M_*_obs fractional, so it is rounded with \code{\link{round_half_up}} (half
+#' away from zero, as the methods specify - not base \code{round()}, which
+#' rounds half to even) and the total shift is reported.
 #'
 #' Mechanism "stems" are discovered from the \code{_obs} columns matching
 #' \code{obs_pattern}; for each stem \code{S} the model is
@@ -660,8 +673,12 @@ fit_bym2_mechanisms <- function(geo, C, scale_factor,
 
     # geostan's Poisson response must be integer; split-cause weights (0.5) make
     # M_*_obs fractional. Round to the nearest integer and report the shift.
+    # round_half_up(), not round(): base R rounds half to even, so 0.5 -> 0 and
+    # 2.5 -> 2. Half-integers are exactly what the split causes produce, so the
+    # two rules disagree on most of the values that matter here. The methods
+    # section specifies half-up.
     y_raw <- geo[[oc]]
-    y_int <- round(y_raw)
+    y_int <- round_half_up(y_raw)
     shift <- sum(abs(y_raw - y_int))
     if (shift > 0) {
       message(sprintf("  %s: rounded observed to integer (total absolute shift %.1f deaths over %d comuni).",

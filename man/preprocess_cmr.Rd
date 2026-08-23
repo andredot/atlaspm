@@ -2,13 +2,15 @@
 % Please edit documentation in R/preprocess_.R
 \name{preprocess_cmr}
 \alias{preprocess_cmr}
-\title{Crude mortality rate table by comune, wide over cause / group / mechanism}
+\title{Crude mortality rate table by area, wide over cause / group / mechanism}
 \usage{
 preprocess_cmr(
   mort_count,
   population,
   group_var = "comune",
-  mort_col = "comune_residenza_2023",
+  mort_col = "comune_residenza",
+  pop_col = "Codice comune",
+  pad_area = TRUE,
   class_vars = c(cause = "C", group = "G", mechanism = "M"),
   pop_year = 2023,
   weight_col = "weight",
@@ -22,21 +24,32 @@ area column \code{mort_col}, the classification columns \code{cause},
 the weight column.}
 
 \item{population}{Path to the population CSV (or a pre-read data frame) with
-columns \code{Codice comune}, \code{Eta}, \code{anno}, \code{sesso},
+columns \code{pop_col}, \code{Eta}, \code{anno}, \code{sesso},
 \code{Comune}, \code{numero}.}
 
 \item{group_var}{Name to give the area key in the output. Default
 \code{"comune"}.}
 
-\item{mort_col}{Name of the comune column in \code{mort_count} that matches
-the population \code{Codice comune}. Default \code{"comune_residenza_2023"}.}
+\item{mort_col}{Name of the area column in \code{mort_count} that matches the
+population key \code{pop_col}. Default \code{"comune_residenza"}.}
+
+\item{pop_col}{Area column in \code{population} matching \code{mort_col}.
+Default \code{"Codice comune"}. Use \code{"area"} for a NIL-aware population
+table keyed on a mixed comune/NIL column.}
+
+\item{pad_area}{Whether to zero-pad the population area key to six digits with
+\code{sprintf("\%06d", ...)}. Default \code{TRUE} (correct for a purely
+numeric ISTAT code). Set \code{FALSE} when \code{pop_col} holds non-numeric
+keys such as \code{"015146_79"}, which must not be coerced through
+\code{as.integer}.}
 
 \item{class_vars}{Named character vector mapping classification columns in
 \code{mort_count} to their output column prefix. Default
 \code{c(cause = "C", group = "G", mechanism = "M")}.}
 
-\item{pop_year}{Census/population year to keep from the CSV. Default
-\code{2023}.}
+\item{pop_year}{Population year(s) to keep from the CSV. May be a vector,
+in which case the denominator is person-years summed across those years
+and all rates are annualised. Default \code{2023}.}
 
 \item{weight_col}{Name of the weight column in \code{mort_count}; deaths are
 summed over it (50/50 causes contribute 0.5). \code{NULL} counts each
@@ -45,45 +58,70 @@ record as one death. Default \code{"weight"}.}
 \item{per}{Rate denominator multiplier. Default \code{100000}.}
 }
 \value{
-A tibble with one row per comune: \code{group_var}, \code{population},
+A tibble with one row per area: \code{group_var}, \code{population},
 one crude-rate column per category named \code{<prefix>_<label>} with the
 label cleaned to snake_case (e.g. \code{C_lung_cancer}, \code{G_cancer},
 \code{M_immunisation_and_prophylaxis}), and a \code{total} column with the
-crude rate over all deaths in the comune. Note the per-prefix columns do
+crude rate over all deaths in the area. Note the per-prefix columns do
 not sum to \code{total}: each classification (cause / group / mechanism)
 already partitions the same deaths, and split causes are counted under
 more than one mechanism.
 }
 \description{
 Builds a wide crude-mortality-rate table with one row per area (comune by
-default) and one column per category of each classification, namely
-\code{cause} (columns prefixed \code{"C_"}), \code{group} (prefixed
-\code{"G_"}) and \code{mechanism} (prefixed \code{"M_"}). Every cell is the
-crude rate \code{deaths / population * per} (deaths per \code{per} residents,
-100 000 by default).
+default, but any spatial unit - e.g. Milan's NILs - via
+\code{mort_col}/\code{pop_col}) and one column per category of each
+classification, namely \code{cause} (columns prefixed \code{"C_"}),
+\code{group} (prefixed \code{"G_"}) and \code{mechanism} (prefixed
+\code{"M_"}). Every cell is the crude rate \code{deaths / population * per}
+(deaths per \code{per} residents, 100 000 by default).
 }
 \details{
 The area key is kept as a plain column (\code{group_var}) rather than baked
-into the rates, so the same comune-level table can later be re-aggregated to
+into the rates, so the same area-level table can later be re-aggregated to
 ASST, distretto, etc. by joining a crosswalk and re-deriving rates.
 
 Deaths are aggregated as the \strong{sum of the \code{weight} column}, so the
 causes the OECD/Eurostat list splits 50/50 each count as 0.5 of a death. Set
 \code{weight_col = NULL} to count every record as a whole death.
 
-The denominator is read from a semicolon-separated population CSV with the
-columns \code{Codice comune;Eta;anno;sesso;Comune;numero}. Only the year
-\code{pop_year} (default 2023) is kept and \code{numero} is summed over all
-ages and both sexes to give one population figure per comune. The population
-\code{Codice comune} is matched to \code{mort_col} in \code{mort_count}
-(default \code{"comune_residenza_2023"}).
+The denominator is read from a semicolon-separated population CSV.
+\code{pop_year} may be a \strong{vector} of years; \code{numero} is summed
+over every requested year and over all ages and both sexes, giving
+\code{person_years} per area. Rates are formed on person-years, so a
+three-year death count over three years of population is an
+\strong{annualised} rate. Passing a single year reproduces the previous
+behaviour exactly.
 
-Every comune present in the population file is returned; comuni with no
-deaths get 0 in every rate column.
+The returned \code{population} column is the mean annual resident
+population (\code{person_years / length(pop_year)}), which is the figure to
+quote when describing area size; \code{person_years} is the figure the rates
+are actually divided by.
+
+\strong{Area key.} The deaths-side key is \code{mort_col} and the
+population-side key is \code{pop_col}; the two must produce identical strings
+for the join. By default the population key is the numeric ISTAT code
+\code{Codice comune}, zero-padded to six digits (\code{pad_area = TRUE}) to
+match the padded codes in the deaths file. For a mixed key containing
+non-numeric values - e.g. an \code{area} column holding both \code{"015011"}
+(comune) and \code{"015146_79"} (Milan comune + NIL) - set \code{pad_area =
+FALSE} so the string passes through untouched (\code{as.integer("015146_79")}
+would otherwise become \code{NA} and silently drop that area's denominator).
+
+Every area present in the population file is returned; areas with no deaths
+get 0 in every rate column.
 }
 \examples{
 \dontrun{
+# comune-level (defaults)
 rates <- preprocess_cmr(mort_count, "popolazione.csv")
+
+# area-level: Milan split into NILs, mixed comune/NIL key, no padding
+area_rates <- preprocess_cmr(mort_count_area, pop_area_table,
+                             group_var = "area",
+                             mort_col  = "area_residenza",
+                             pop_col   = "area",
+                             pad_area  = FALSE)
 
 # re-aggregate comuni to ASST later via a crosswalk:
 rates |>

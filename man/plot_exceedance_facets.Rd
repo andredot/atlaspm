@@ -11,7 +11,7 @@ plot_exceedance_facets(
   strip_prefix = "^M_",
   strip_suffix = "_bym2_exc$",
   ncol = 4,
-  title = "Strategic prioritisation map by mechanism, by comune",
+  title = "Strategic prioritisation map by mechanism, by area",
   subtitle = NULL,
   caption = "Per-mechanism BYM2 exceedance probabilities; tiers shared across panels.",
   threshold_label = NULL,

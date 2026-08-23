@@ -2,13 +2,15 @@
 % Please edit documentation in R/preprocess_.R
 \name{preprocess_smr}
 \alias{preprocess_smr}
-\title{Indirectly standardised mortality table by comune, wide over cause / group / mechanism}
+\title{Indirectly standardised mortality table by area, wide over cause / group / mechanism}
 \usage{
 preprocess_smr(
   mort_count,
   population,
   group_var = "comune",
-  mort_col = "comune_residenza_2023",
+  mort_col = "comune_residenza",
+  pop_col = "Codice comune",
+  pad_area = TRUE,
   age_col = "eta",
   sex_col = "sesso",
   class_vars = c(cause = "C", group = "G", mechanism = "M"),
@@ -24,15 +26,25 @@ area column \code{mort_col}, the strata columns \code{age_col} and
 (unless \code{weight_col = NULL}) the weight column.}
 
 \item{population}{Path to the semicolon-separated population CSV (or a
-pre-read data frame) with columns \code{Codice comune}, \code{Eta},
-\code{anno}, \code{sesso}, \code{Comune}, \code{numero}. \code{Eta} is the
-single year of age and \code{numero} the population count.}
+pre-read data frame) with columns \code{pop_col}, \code{Eta}, \code{anno},
+\code{sesso}, \code{Comune}, \code{numero}. \code{Eta} is the single year of
+age and \code{numero} the population count.}
 
 \item{group_var}{Name to give the area key in the output. Default
 \code{"comune"}.}
 
-\item{mort_col}{Comune column in \code{mort_count} matching the population
-\code{Codice comune}. Default \code{"comune_residenza_2023"}.}
+\item{mort_col}{Area column in \code{mort_count} matching the population key
+\code{pop_col}. Default \code{"comune_residenza"}.}
+
+\item{pop_col}{Area column in \code{population} matching \code{mort_col}.
+Default \code{"Codice comune"}. Use \code{"area"} for a NIL-aware population
+table keyed on a mixed comune/NIL column.}
+
+\item{pad_area}{Whether to zero-pad the population area key to six digits with
+\code{sprintf("\%06d", ...)}. Default \code{TRUE} (correct for a purely
+numeric ISTAT code). Set \code{FALSE} when \code{pop_col} holds non-numeric
+keys such as \code{"015146_79"}, which must not be coerced through
+\code{as.integer}.}
 
 \item{age_col, sex_col}{Age (single year) and sex columns in \code{mort_count}.
 Defaults \code{"eta"} and \code{"sesso"}. They are matched to \code{Eta}
@@ -50,7 +62,7 @@ record as one death. Default \code{"weight"}.}
 \item{per}{Multiplier for the standardised rate. Default \code{100000}.}
 }
 \value{
-A tibble with one row per comune: \code{group_var}, \code{population},
+A tibble with one row per area: \code{group_var}, \code{population},
 then for every category four columns \code{<prefix>_<label>_obs},
 \code{<prefix>_<label>_exp}, \code{<prefix>_<label>_smr} and
 \code{<prefix>_<label>_isr}, plus \code{total_obs} (observed deaths),
@@ -64,8 +76,9 @@ each category separately.
 \description{
 Companion to \code{\link{preprocess_cmr}} that returns indirectly
 age-sex-standardised mortality instead of the crude rate. For every area
-(comune by default) and every category of each classification - \code{cause}
-(columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
+(comune by default, but any spatial unit - e.g. Milan's NILs - via
+\code{mort_col}/\code{pop_col}) and every category of each classification -
+\code{cause} (columns prefixed \code{"C_"}), \code{group} (\code{"G_"}) and
 \code{mechanism} (\code{"M_"}) - it returns four columns: observed deaths
 (\code{<prefix>_<label>_obs}), expected deaths (\code{<prefix>_<label>_exp}),
 the SMR (\code{<prefix>_<label>_smr}, observed / expected) and the indirectly
@@ -83,15 +96,34 @@ age (\code{eta} / \code{Eta}) crossed with sex (\code{sesso}).
 
 Deaths are weighted by \code{weight_col} (50/50 split causes contribute 0.5).
 Observed and expected deaths are aggregated on the same weighting, so the SMR
-is internally consistent. Every comune present in the population file is
-returned; comuni with no deaths get SMR/ISR/observed of 0, but their
+is internally consistent. Every area present in the population file is
+returned; areas with no deaths get SMR/ISR/observed of 0, but their
 \emph{expected} stays positive (it must not be zeroed - a Poisson spatial
 model uses \code{log(expected)} as its offset, and \code{log(0)} is
 undefined).
+
+\strong{Area key.} The deaths-side key is \code{mort_col} and the
+population-side key is \code{pop_col}; the two must produce identical strings
+for a join to occur. By default the population key is the numeric ISTAT code
+\code{Codice comune}, which is zero-padded to six digits (\code{pad_area =
+TRUE}) to match the padded codes carried in the deaths file. For a mixed key
+that contains non-numeric values - e.g. an \code{area} column holding both
+\code{"015011"} (comune) and \code{"015146_79"} (Milan comune + NIL) - set
+\code{pad_area = FALSE} so the string passes through untouched
+(\code{as.integer("015146_79")} would otherwise become \code{NA} and silently
+drop that area's denominator).
 }
 \examples{
 \dontrun{
+# comune-level (defaults)
 smr <- preprocess_smr(mort_count, "popolazione.csv")
+
+# area-level: Milan split into NILs, mixed comune/NIL key, no padding
+area_smr <- preprocess_smr(mort_count_area, pop_area_table,
+                           group_var = "area",
+                           mort_col  = "area_residenza",
+                           pop_col   = "area",
+                           pad_area  = FALSE)
 }
 
 }

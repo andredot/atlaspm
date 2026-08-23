@@ -2,7 +2,7 @@
 % Please edit documentation in R/add_.R
 \name{add_geo}
 \alias{add_geo}
-\title{Attach comune geometry to a tabular layer for mapping}
+\title{Attach area geometry to a tabular layer for mapping}
 \usage{
 add_geo(
   data,
@@ -10,47 +10,68 @@ add_geo(
   data_key = "comune",
   shp_key = "PRO_COM_T",
   keep = c("data", "geometry"),
+  pad_keys = TRUE,
   code_width = 6
 )
 }
 \arguments{
-\item{data}{A comune-level data frame (e.g. output of \code{preprocess_cmr()}
+\item{data}{An area-level data frame (e.g. output of \code{preprocess_cmr()}
 or \code{preprocess_smr()}, or the population table).}
 
-\item{shp}{The comune geometries as an already-read \code{sf} object
-(e.g. \code{sf::st_read("geodata/Com01012025_g/Com01012025_g_WGS84.shp")}).}
+\item{shp}{The area geometries as an already-read \code{sf} object. For the
+comune analysis this is \code{pop_shp} (key \code{"PRO_COM_T"}); for the
+NIL-aware analysis it is \code{area_shp}, whose key column is \code{"area"}.}
 
-\item{data_key}{Name of the comune-code column in \code{data}. Default
+\item{data_key}{Name of the area-code column in \code{data}. Default
 \code{"comune"}.}
 
-\item{shp_key}{Name of the comune-code column in the shapefile. Default
-\code{"PRO_COM_T"}.}
+\item{shp_key}{Name of the area-code column in the shapefile. Default
+\code{"PRO_COM_T"}. Use \code{"area"} for \code{area_shp}.}
 
 \item{keep}{Which side drives the rows: \code{"data"} (default, left join
-keeping every row of \code{data}) or \code{"geometry"} (keep every comune
+keeping every row of \code{data}) or \code{"geometry"} (keep every area
 in the shapefile, e.g. to show the whole map with NA where there is no
 data).}
 
-\item{code_width}{Width to zero-pad both keys to before joining. Default
-\code{6}.}
+\item{pad_keys}{Whether to zero-pad both keys to \code{code_width} digits
+before joining. Default \code{TRUE} (correct for a purely numeric ISTAT
+code). Set \code{FALSE} when either key holds non-numeric values such as
+\code{"015146_79"}, which must not be coerced through \code{as.integer}.}
+
+\item{code_width}{Width to zero-pad both keys to before joining, when
+\code{pad_keys = TRUE}. Default \code{6}.}
 }
 \value{
 An \code{sf} object: the columns of \code{data} plus the shapefile
-geometry (and its attribute columns), one row per matched comune.
+geometry (and its attribute columns), one row per matched area.
 }
 \description{
-Joins any comune-level table - the population denominator, a crude-rate table
+Joins any area-level table - the population denominator, a crude-rate table
 from \code{\link{preprocess_cmr}}, a standardised table from
-\code{\link{preprocess_smr}}, etc. - onto the ISTAT comune boundaries and
-returns an \code{sf} ready for \code{ggplot2::geom_sf()}. Geometry is joined
-on the fly, so the rate functions stay purely tabular.
+\code{\link{preprocess_smr}}, etc. - onto the boundary geometries and returns
+an \code{sf} ready for \code{ggplot2::geom_sf()}. Geometry is joined on the
+fly, so the rate functions stay purely tabular.
 }
 \details{
-The join keys are matched as zero-padded \code{code_width}-character strings,
-so a numeric shapefile code (\code{15002}) and a text table code
-(\code{"015002"}) still line up. By default it is a left join from the table,
-keeping every row of \code{data} (set \code{keep = "geometry"} to instead
-keep every comune in the shapefile).
+By default the join keys are matched as zero-padded \code{code_width}-character
+strings (\code{pad_keys = TRUE}), so a numeric shapefile code (\code{15002})
+and a text table code (\code{"015002"}) still line up. This assumes a purely
+\strong{numeric} ISTAT comune code. For a mixed key that contains non-numeric
+values - e.g. an \code{area} column holding both \code{"015011"} (comune) and
+\code{"015146_79"} (Milan comune + NIL) - set \code{pad_keys = FALSE}: the
+keys are then compared as-is (both sides are already padded strings), avoiding
+the \code{as.integer("015146_79") -> NA} collapse that would merge every NIL
+into a single \code{"NA"} key.
+
+By default it is a left join from the table, keeping every row of \code{data}
+(set \code{keep = "geometry"} to instead keep every area in the shapefile).
+
+When \code{data_key} and \code{shp_key} name the same column (as in the
+NIL-aware call, where both are \code{"area"}), the shapefile's copy of the
+key is dropped before the join. Without this dplyr would disambiguate the
+two into \code{area.x} and \code{area.y}, leaving no column called
+\code{area} - and it would do so without error, so the failure would only
+appear in a downstream target that selects on the key.
 }
 \examples{
 \dontrun{
@@ -63,6 +84,10 @@ ggplot(crude_map) + geom_sf(aes(fill = total))
 
 add_geo(smr, comuni)                              # same for the standardised table
 add_geo(pop, comuni, data_key = "Codice comune")  # or the population table
+
+# NIL-aware layer: mixed comune/NIL keys on both sides, no padding
+add_geo(area_smr, area_shp,
+        data_key = "area", shp_key = "area", pad_keys = FALSE)
 }
 
 }

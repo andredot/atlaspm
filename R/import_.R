@@ -68,8 +68,18 @@ import_mortality <- function(file_path) {
       # is no way to recover the decedent afterwards.
       death_id = dplyr::row_number(),
 
-      # sex as a categorical variable
-      sesso = factor(sesso),
+      # Sex, mapped EXPLICITLY onto the ISTAT convention used by the population
+      # files: 1 = male, 2 = female.
+      #
+      # This was previously `factor(sesso)`, which is silently wrong. The
+      # register codes sex as "M"/"F"; factor() orders levels alphabetically,
+      # so F became 1 and M became 2, while pop_finale.csv and pop_nil.csv both
+      # use 1 = Maschi. preprocess_smr() then took as.integer() of that factor,
+      # standardising female deaths against the male population and vice versa.
+      # Every expected count in the pipeline was affected. Keep the mapping
+      # explicit and assert it, so the failure mode cannot recur silently.
+      sesso = recode_sex(sesso),
+      sex   = factor(sesso, levels = c(1L, 2L), labels = c("Male", "Female")),
 
       # age at death
       eta = as.integer(eta),
@@ -96,7 +106,7 @@ import_mortality <- function(file_path) {
 #' dell'Interno release) and returns one row per municipality, keyed on a
 #' zero-padded 6-digit \code{comune} code so the result joins directly against
 #' the geometry and rate tables produced elsewhere in the package (the same
-#' key convention used by \code{\link{add_geo}} and \code{\link{import_population}}).
+#' key convention used by \code{\link{add_geo}}).
 #'
 #' The source file is the ISTAT-distributed IVSM, which summarises municipal
 #' vulnerability through seven elementary indicators spanning the "material"
@@ -106,7 +116,7 @@ import_mortality <- function(file_path) {
 #' component indicators through as well.
 #'
 #' The municipality code is read as character and left-padded with zeros to 6
-#' characters via \code{\link{pad}}, so a numeric \code{15002} in the source
+#' characters, so a numeric \code{15002} in the source
 #' becomes \code{"015002"} and matches the \code{PRO_COM_T}-style codes used by
 #' the ISTAT boundary layer. This mirrors the padding done inside
 #' \code{add_geo}, so an IVSM table imported here can be passed straight to
@@ -185,14 +195,14 @@ import_ivsm <- function(path,
 #' Reads the per-region ISTAT 2023 permanent-census section workbooks
 #' (\code{R01_..._2023_sezioni.xlsx} ... \code{R20_..._2023_sezioni.xlsx}) from a
 #' directory and row-binds them into a single national section-level table. Only
-#' the columns needed by \code{\link{build_deprivation_proxy}} are kept, so the
+#' the columns needed by \code{\link{build_deprivation}} are kept, so the
 #' result stays small even though the inputs span ~350,000 census sections.
 #'
 #' The record layout (TRACCIATO) is shared across regions, so one column
 #' selection applies to every file. The TRACCIATO workbook and any other
 #' non-"_sezioni" file in the directory are skipped by the default \code{pattern}.
 #' The municipality national code \code{PROCOM} is read as character and
-#' zero-padded to 6 digits via \code{\link{pad}}, matching the key convention
+#' zero-padded to 6 digits, matching the key convention
 #' used elsewhere in the package.
 #'
 #' @param dir Directory containing the regional xlsx files.
@@ -204,8 +214,12 @@ import_ivsm <- function(path,
 #'   counts, employed 15-64, the ten 15-64 age bands, foreign residents, and
 #'   occupied dwellings.
 #'
-#' @return A tibble, one row per census section: \code{PROCOM} (character,
-#'   6-digit) and the selected count columns as numeric.
+#' @param sez_key Name of the census-section identifier column. Detected from
+#'   the first file when \code{NULL}; see \code{\link{detect_section_key}}.
+#'
+#' @return A tibble, one row per census section: the section identifier,
+#'   \code{PROCOM} (character, 6-digit) and the selected count columns as
+#'   numeric.
 #' @export
 import_census_2023 <- function(dir,
                                pattern = "_2023_sezioni\\.xlsx$",
@@ -215,11 +229,25 @@ import_census_2023 <- function(dir,
                                            "P86", "P87", "P88",
                                            "P101",
                                            paste0("P", 17:26),  # pop 15-64 bands
-                                           "ST1", "A2")) {
+                                           "ST1", "A2"),
+                               sez_key = NULL) {
   files <- list.files(dir, pattern = pattern, full.names = TRUE)
   if (length(files) == 0L) {
     stop("No files matching '", pattern, "' in ", dir, call. = FALSE)
   }
+
+  # The section identifier is needed to resolve the index below municipality
+  # level (see build_deprivation()). It is detected from the first file and
+  # then required in all of them, so a release that renames it fails loudly
+  # rather than silently returning a municipality-only table.
+  if (is.null(sez_key)) {
+    sez_key <- detect_section_key(
+      readxl::read_excel(files[1], sheet = sheet, n_max = 1),
+      what = basename(files[1])
+    )
+    message("Census section identifier detected as '", sez_key, "'.")
+  }
+  cols <- unique(c(sez_key, cols))
 
   read_one <- function(f) {
     d <- readxl::read_excel(f, sheet = sheet)
@@ -229,10 +257,11 @@ import_census_2023 <- function(dir,
            paste(missing, collapse = ", "), call. = FALSE)
     }
     d <- dplyr::select(d, dplyr::all_of(cols))
-    count_cols <- setdiff(cols, "PROCOM")
+    count_cols <- setdiff(cols, c("PROCOM", sez_key))
     dplyr::mutate(
       d,
       PROCOM = pad(as.character(PROCOM)),
+      dplyr::across(dplyr::all_of(sez_key), as.character),
       dplyr::across(dplyr::all_of(count_cols),
                     ~ suppressWarnings(as.numeric(as.character(.x))))
     )

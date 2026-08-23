@@ -42,8 +42,9 @@ graph, so they are computed once and passed in). Each mechanism is smoothed on
 its own indirectly standardised expected counts, so a smoothed RR of 1 means
 "matches the region-wide age-sex expectation for that mechanism".
 geostan's Poisson response must be integer; split-cause weights (0.5) make
-M_*_obs fractional, so it's rounded to the nearest integer and
-shift is reported.
+M_*_obs fractional, so it is rounded with \code{\link{round_half_up}} (half
+away from zero, as the methods specify - not base \code{round()}, which
+rounds half to even) and the total shift is reported.
 }
 \details{
 Mechanism "stems" are discovered from the \code{_obs} columns matching

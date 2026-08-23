@@ -7,20 +7,20 @@
 plot_cmr_isr(
   cmr,
   smr,
-  group_var = "comune",
+  group_var = "area",
   crude = "total",
   isr = "total_isr",
   smr_col = "total_smr",
-  title = "Crude vs standardised preventable mortality, by comune",
-  subtitle = "Each point a comune; colour = SMR (observed / expected)"
+  title = "Crude vs standardised avoidable mortality, by area",
+  subtitle = "Each point a area; colour = SMR (observed / expected)"
 )
 }
 \arguments{
-\item{cmr}{Crude-rate table from \code{preprocess_cmr()} (one row per comune).}
+\item{cmr}{Crude-rate table from \code{preprocess_cmr()} (one row per area).}
 
-\item{smr}{Standardised table from \code{preprocess_smr()} (one row per comune).}
+\item{smr}{Standardised table from \code{preprocess_smr()} (one row per area).}
 
-\item{group_var}{Comune key present in both. Default \code{"comune"}.}
+\item{group_var}{area key present in both. Default \code{"area"}.}
 
 \item{crude, isr, smr_col}{Column names to use. Defaults \code{"total"},
 \code{"total_isr"}, \code{"total_smr"}.}
@@ -31,7 +31,7 @@ plot_cmr_isr(
 A \code{ggplot} object.
 }
 \description{
-One point per comune: crude mortality rate on the x-axis, indirectly
+One point per area: crude mortality rate on the x-axis, indirectly
 standardised rate (ISR) on the y-axis, coloured by the SMR. The dashed
 diagonal marks where the standardised rate equals the crude rate, so points
 above it are pulled up by standardisation (younger-than-standard population)

@@ -38,7 +38,7 @@ Reads a municipal IVSM table (ISTAT \emph{8milaCensus} / Ministero
 dell'Interno release) and returns one row per municipality, keyed on a
 zero-padded 6-digit \code{comune} code so the result joins directly against
 the geometry and rate tables produced elsewhere in the package (the same
-key convention used by \code{\link{add_geo}} and \code{\link{import_population}}).
+key convention used by \code{\link{add_geo}}).
 }
 \details{
 The source file is the ISTAT-distributed IVSM, which summarises municipal
@@ -49,7 +49,7 @@ retained by default; pass \code{keep_indicators = TRUE} to carry the seven
 component indicators through as well.
 
 The municipality code is read as character and left-padded with zeros to 6
-characters via \code{\link{pad}}, so a numeric \code{15002} in the source
+characters, so a numeric \code{15002} in the source
 becomes \code{"015002"} and matches the \code{PRO_COM_T}-style codes used by
 the ISTAT boundary layer. This mirrors the padding done inside
 \code{add_geo}, so an IVSM table imported here can be passed straight to

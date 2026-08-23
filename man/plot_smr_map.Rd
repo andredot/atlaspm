@@ -2,19 +2,19 @@
 % Please edit documentation in R/plot_.R
 \name{plot_smr_map}
 \alias{plot_smr_map}
-\title{Map indirectly standardised preventable mortality by comune}
+\title{Map indirectly standardised avoidable mortality by area}
 \usage{
 plot_smr_map(
   smr,
   value = "total_smr",
   breaks = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
-  title = "Preventable mortality by Comune",
-  subtitle = "Indirectly standardised mortality ratio (SMR) for preventable causes",
+  title = "Avoidable mortality by area",
+  subtitle = "Indirectly standardised mortality ratio (SMR), all avoidable causes",
   caption = "SMR = 1 means deaths match the area-wide age-sex expectation."
 )
 }
 \arguments{
-\item{smr}{An \code{sf} object with one row per comune and a numeric SMR
+\item{smr}{An \code{sf} object with one row per area and a numeric SMR
 column, e.g. \code{add_geo(preprocess_smr(...), comuni)}.}
 
 \item{value}{Name of the SMR column to map. Default \code{"total_smr"}.}
@@ -34,7 +34,7 @@ Draws a choropleth of the all-cause standardised mortality ratio
 (\code{total_smr}) from a geometry-attached \code{smr} table (the output of
 \code{preprocess_smr()} passed through \code{add_geo()}). The SMR is binned
 into 5 classes anchored on 1.0 (= deaths matching the age-sex expectation) and
-shown with an earthy diverging palette, no comune borders and a clean
+shown with an earthy diverging palette, no area borders and a clean
 \code{theme_void}.
 }
 \examples{

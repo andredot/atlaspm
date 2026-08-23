@@ -15,18 +15,17 @@ target that resolves the file location.}
 A \link[tibble:tibble]{tibble} with one row per death and the columns:
 \describe{
 \item{sesso}{Sex, as a factor.}
-\item{icd1}{First ICD descriptor code of the cause of death (character).}
-\item{comune_residenza_2023}{ISTAT municipality of residence code (character).}
-\item{asst_2023}{ASST code — the higher-level health authority (character).}
-\item{nil_2023}{Milan NIL (local area) code, or \code{NA} if resident outside Milan (character).}
-\item{distretto_2023}{District code — the most proximal local health authority (character).}
+\item{comune_residenza}{ISTAT municipality of residence code (character).}
+\item{asst}{ASST code — the higher-level health authority (character).}
+\item{nil}{Milan NIL (local area) code, or \code{NA} if resident outside Milan (character).}
+\item{distretto}{District code — the most proximal local health authority (character).}
 \item{eta}{Age at death (integer).}
-\item{causa}{Cause-of-death code (character).}
+\item{causa_finale}{Cause-of-death code (character).}
 \item{area_residenza}{Combined residence geography: NIL within Milan, otherwise the municipality (character).}
 }
 }
 \description{
-Reads the semicolon-delimited RENCAM mortality export, keeps the fields
+Reads the semicolon-delimited mortality export, keeps the fields
 relevant to the preventable-mortality analysis, and applies the cleaning
 steps needed before record linkage and spatial modelling.
 }
@@ -42,7 +41,7 @@ The function applies four transformations:
 \item \code{eta} is coerced to integer.
 \item \code{icd1} may contain several space-separated codes; only the
 first is kept.
-\item \code{nil_2023} equal to \code{"999"} marks a resident living
+\item \code{nil} equal to \code{"999"} marks a resident living
 outside the municipality of Milan and is recoded to \code{NA}.
 }
 

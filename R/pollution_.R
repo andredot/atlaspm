@@ -338,7 +338,7 @@ add_pollution <- function(geo, pollution_area,
 
 #' Rank stability of the spatial pattern between two years
 #'
-#' The \S8.3 selection rule prefers the pollutant whose spatial pattern is more
+#' The Section 8.3 selection rule prefers the pollutant whose spatial pattern is more
 #' persistent, on the reasoning that chronic-disease mortality responds to
 #' long-run exposure, so a field that reshuffles between years is a poor proxy
 #' for the exposure that actually generated the deaths.
@@ -406,7 +406,7 @@ check_aq_ranks <- function(pollution_area, years = c(2013L, 2023L)) {
 }
 
 
-#' Pre-specified pollutant selection diagnostic (\S8.3)
+#' Pre-specified pollutant selection diagnostic (Section 8.3)
 #'
 #' Every criterion in this table is computed on the \strong{exposure alone}.
 #' That is the entire point of the rule: selecting the pollutant that shows the
@@ -423,7 +423,7 @@ check_aq_ranks <- function(pollution_area, years = c(2013L, 2023L)) {
 #'     this pollutant.}
 #'   \item{\code{cor_z_low}}{\strong{Lower} - a covariate strongly correlated
 #'     with the least-shrunk canonical regressor is precisely the configuration
-#'     that produces spatial confounding (\S10.3).}
+#'     that produces spatial confounding (Section 10.3).}
 #'   \item{\code{cor_di}}{Lower - less mutual attenuation against deprivation.}
 #'   \item{\code{rho}}{Higher - a more persistent long-run proxy.}
 #' }
@@ -437,7 +437,7 @@ check_aq_ranks <- function(pollution_area, years = c(2013L, 2023L)) {
 #' @param year The exposure year the models will use. Default \code{2023L}.
 #' @param di_col Name of the deprivation column. Default \code{"di_score"}.
 #' @param z_low Optional numeric vector: the least-shrunk canonical regressor
-#'   from the \S10.3 diagnostic, in \code{dat} row order. When \code{NULL},
+#'   from the Section 10.3 diagnostic, in \code{dat} row order. When \code{NULL},
 #'   \code{cor_z_low} is \code{NA} and the decision cannot yet be closed - this
 #'   is usually the criterion that separates the two pollutants.
 #' @param ranks Optional output of \code{\link{check_aq_ranks}}, merged in.

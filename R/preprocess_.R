@@ -16,11 +16,21 @@
 #' (not preventable). Codes that match nothing, and missing/invalid codes
 #' (e.g. \code{NA}, \code{"ZZZZ"}), are dropped by the final filter.
 #'
-#' The eight causes that the OECD/Eurostat list splits 50/50 between the
-#' preventable and treatable categories (tuberculosis, cervical cancer,
-#' diabetes, and five cardiovascular causes) carry \code{weight = 0.5}; all
-#' other preventable causes carry \code{weight = 1}. To count deaths without
-#' double-counting against a treatable analysis, weight by this column.
+#' Nine causes in the lookup carry \code{weight = 0.5}, in two distinct
+#' situations. \strong{Seven} are split across the preventable and treatable
+#' lists: tuberculosis, cervical cancer, and five cardiovascular causes
+#' (hypertensive diseases, ischaemic heart diseases, cerebrovascular diseases,
+#' other atherosclerosis, aortic aneurysm). \strong{Two} more - colorectal
+#' cancer and female breast cancer - are wholly treatable but split across two
+#' mechanisms (screening and tertiary prevention). Diabetes is \emph{not}
+#' split: E11 is preventable at weight 1 and E10/E12-E14 are treatable at
+#' weight 1. All other causes carry \code{weight = 1}.
+#'
+#' Because the two arms of a split cause share a \code{cause} label and a
+#' \code{group}, summing \code{weight} within either of those classifications
+#' recovers whole deaths; it is only within \code{mechanism} that halves
+#' appear. To count deaths without double-counting, always weight by this
+#' column.
 #'
 #' @param mort_raw A data frame of individual death records (e.g. \code{mort_raw}).
 #'   If your data is in a file, read it first (e.g. with
@@ -97,7 +107,15 @@ preprocess_mortality <- function(mort_raw,
       )
     ) |>
     # 4. append the avoidable-cause metadata
-    dplyr::left_join(lookup, by = c("match_key" = "key")) |>
+    # relationship = "many-to-many" is DECLARED, not tolerated. Both sides
+    # legitimately have repeated keys: many deaths share an ICD-10 code, and a
+    # split cause has two lookup rows per code. The fan-out is the mechanism
+    # that creates the preventable and treatable arms. Saying so explicitly
+    # documents the intent and stops dplyr's warning - which exists because
+    # many-to-many is usually a key error - from being ignored here and then
+    # ignored somewhere it matters.
+    dplyr::left_join(lookup, by = c("match_key" = "key"),
+                     relationship = "many-to-many") |>
     # 5. keep only the preventable causes (the matched rows)
     dplyr::filter(!is.na(.data[["cause"]])) |>
     dplyr::select(-dplyr::all_of(c(".code_norm", ".key4", ".key3")))
@@ -120,9 +138,18 @@ preprocess_mortality <- function(mort_raw,
 #' causes the OECD/Eurostat list splits 50/50 each count as 0.5 of a death. Set
 #' \code{weight_col = NULL} to count every record as a whole death.
 #'
-#' The denominator is read from a semicolon-separated population CSV. Only the
-#' year \code{pop_year} (default 2023) is kept and \code{numero} is summed over
-#' all ages and both sexes to give one population figure per area.
+#' The denominator is read from a semicolon-separated population CSV.
+#' \code{pop_year} may be a \strong{vector} of years; \code{numero} is summed
+#' over every requested year and over all ages and both sexes, giving
+#' \code{person_years} per area. Rates are formed on person-years, so a
+#' three-year death count over three years of population is an
+#' \strong{annualised} rate. Passing a single year reproduces the previous
+#' behaviour exactly.
+#'
+#' The returned \code{population} column is the mean annual resident
+#' population (\code{person_years / length(pop_year)}), which is the figure to
+#' quote when describing area size; \code{person_years} is the figure the rates
+#' are actually divided by.
 #'
 #' \strong{Area key.} The deaths-side key is \code{mort_col} and the
 #' population-side key is \code{pop_col}; the two must produce identical strings
@@ -159,8 +186,9 @@ preprocess_mortality <- function(mort_raw,
 #' @param class_vars Named character vector mapping classification columns in
 #'   \code{mort_count} to their output column prefix. Default
 #'   \code{c(cause = "C", group = "G", mechanism = "M")}.
-#' @param pop_year Census/population year to keep from the CSV. Default
-#'   \code{2023}.
+#' @param pop_year Population year(s) to keep from the CSV. May be a vector,
+#'   in which case the denominator is person-years summed across those years
+#'   and all rates are annualised. Default \code{2023}.
 #' @param weight_col Name of the weight column in \code{mort_count}; deaths are
 #'   summed over it (50/50 causes contribute 0.5). \code{NULL} counts each
 #'   record as one death. Default \code{"weight"}.
@@ -219,8 +247,11 @@ preprocess_cmr <- function(mort_count,
     population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
   }
 
+  n_years <- length(unique(pop_year))
+  population <- check_pop_years(population, pop_year)
+
   pop <- population |>
-    dplyr::filter(.data[["anno"]] == pop_year) |>
+    dplyr::filter(.data[["anno"]] %in% pop_year) |>
     dplyr::mutate(
       # match the deaths-side key: pad numeric comune codes to 6 digits, but let
       # mixed keys like "015146_79" pass through as-is (as.integer() -> NA).
@@ -228,8 +259,9 @@ preprocess_cmr <- function(mort_count,
       else as.character(.data[[pop_col]])
     ) |>
     dplyr::group_by(.area) |>
-    dplyr::summarise(population = sum(.data[["numero"]], na.rm = TRUE),
+    dplyr::summarise(person_years = sum(.data[["numero"]], na.rm = TRUE),
                      .groups = "drop") |>
+    dplyr::mutate(population = .data[["person_years"]] / n_years) |>
     dplyr::rename(!!group_var := ".area")
 
   # ---- 2. weighted deaths per area x (each classification, each level) ----
@@ -276,8 +308,11 @@ preprocess_cmr <- function(mort_count,
   pop |>
     dplyr::rename(.area = dplyr::all_of(group_var)) |>
     dplyr::left_join(wide_counts, by = ".area") |>
+    # person-years, not population: with pop_year spanning 2022-2024 this makes
+    # every rate an annual rate rather than a three-year cumulative one.
     dplyr::mutate(dplyr::across(dplyr::all_of(rate_cols),
-                                ~ dplyr::coalesce(.x, 0) / .data[["population"]] * per)) |>
+                                ~ dplyr::coalesce(.x, 0) /
+                                  .data[["person_years"]] * per)) |>
     dplyr::rename(!!group_var := ".area")
 }
 
@@ -401,13 +436,19 @@ preprocess_smr <- function(mort_count,
 
   use_weight <- !is.null(weight_col) && weight_col %in% names(mort_count)
 
-  # ---- 1. population by area x age x sex (single year) ----
+  # ---- 1. population by area x age x sex, summed over pop_year ----
   if (is.character(population)) {
     population <- readr::read_delim(population, delim = ";", show_col_types = FALSE)
   }
 
+  n_years    <- length(unique(pop_year))
+  population <- check_pop_years(population, pop_year)
+
+  # `.pop` is PERSON-YEARS once pop_year spans more than one year: the deaths
+  # are a multi-year count, so the denominator has to be multi-year too or the
+  # standard schedule (and every rate derived from it) is inflated n_years-fold.
   pop_strata <- population |>
-    dplyr::filter(.data[["anno"]] == pop_year) |>
+    dplyr::filter(.data[["anno"]] %in% pop_year) |>
     dplyr::mutate(
       # match the deaths-side key: pad numeric comune codes to 6 digits, but let
       # mixed keys like "015146_79" pass through as-is (as.integer() -> NA).
@@ -420,10 +461,11 @@ preprocess_smr <- function(mort_count,
     dplyr::group_by(.area, .age, .sex) |>
     dplyr::summarise(.pop = sum(.pop, na.rm = TRUE), .groups = "drop")
 
-  # total resident population per area (all ages/sexes) for the output
+  # person-years per area, plus the mean annual resident population
   pop_total <- pop_strata |>
     dplyr::group_by(.area) |>
-    dplyr::summarise(population = sum(.pop), .groups = "drop")
+    dplyr::summarise(person_years = sum(.pop), .groups = "drop") |>
+    dplyr::mutate(population = .data[["person_years"]] / n_years)
 
   # ---- 2. observed deaths per area x category, and per stratum x category ----
   m <- mort_count |>
@@ -431,8 +473,19 @@ preprocess_smr <- function(mort_count,
       .w    = if (use_weight) .data[[weight_col]] else 1,
       .area = as.character(.data[[mort_col]]),
       .age  = as.integer(.data[[age_col]]),
-      .sex  = as.integer(.data[[sex_col]])
+      # as.integer() on a FACTOR returns the level index, not the code. That is
+      # how the sexes came to be swapped: factor(c("M","F")) orders levels
+      # alphabetically, so F took index 1 while the population file means male
+      # by 1. recode_sex() in import_mortality() now guarantees an integer;
+      # this guard is what stops the bug from ever returning silently.
+      .sex  = if (is.factor(.data[[sex_col]])) {
+        stop("`", sex_col, "` is a factor. as.integer() would take the level ",
+             "index, not the ISTAT sex code. Pass an integer column ",
+             "(1 = male, 2 = female); see recode_sex().", call. = FALSE)
+      } else as.integer(.data[[sex_col]])
     )
+
+  assert_sex_alignment(m$.sex, pop_strata$.sex)
 
   # standard schedule denominator: total population per stratum across ALL areas
   std_denom <- pop_strata |>
@@ -549,7 +602,7 @@ preprocess_smr <- function(mort_count,
     # areas with no deaths: SMR/ISR/observed are 0, but EXPECTED must stay as-is
     # (a death-free area still has positive expected; zeroing it breaks log(E)).
     dplyr::mutate(dplyr::across(
-      -dplyr::all_of(c(".area", "population", exp_cols)),
+      -dplyr::all_of(c(".area", "population", "person_years", exp_cols)),
       ~ dplyr::coalesce(.x, 0)
     )) |>
     dplyr::rename(!!group_var := ".area")
@@ -647,87 +700,9 @@ wtd_quantile_group <- function(x, w, n = 5) {
 }
 
 
-#' Build the four-indicator deprivation proxy by municipality
-#'
-#' Aggregates census-section counts to municipality (\code{PROCOM}), forms the
-#' four proxy indicators, standardises each against the \strong{national}
-#' distribution, sums them into a single deprivation score, derives national
-#' population quintiles, and only then filters to the municipalities present in
-#' the mortality data.
-#'
-#' This is the permanent-census \emph{proxy} reformulation of the Italian
-#' Deprivation Index, \strong{not} the validated five-indicator 2011 index. Two
-#' original indicators (non-home-ownership and single-parent family) are absent
-#' from the permanent-census release and are replaced by foreign-population
-#' share; overcrowding is approximated by occupants per dwelling and
-#' unemployment by non-employment. Treat it as a contemporary sensitivity
-#' comparator, not as a newer edition of the same construct.
-#'
-#' Standardisation is national by design: z-scores use the mean and SD across
-#' \emph{every} Italian municipality in \code{census}, so the study-area filter
-#' is applied last and never influences the score or the quintile cut points.
-#' All four indicators are oriented so that a higher value means more
-#' disadvantage, so a plain sum of z-scores is the index.
-#'
-#' @param census Section-level table from \code{\link{import_census_2023}}.
-#' @param mort_raw Mortality table whose \code{mort_col} lists the study
-#'   municipalities to retain.
-#' @param mort_col Municipality-code column in \code{mort_raw}. Default
-#'   \code{"comune_residenza"}. Matched after zero-padding both sides.
-#'
-#' @return A tibble, one row per retained municipality: \code{comune} (6-digit
-#'   key), \code{population}, the four raw indicators, the continuous
-#'   \code{di_score}, and national \code{di_quintile}.
-#' @seealso \code{\link{import_census_2023}}, \code{\link{wtd_quantile_group}}.
-#' @export
-build_deprivation_proxy <- function(census, mort_raw,
-                                    mort_col = "comune_residenza") {
-
-  # 1. aggregate section counts to municipality ------------------------------
-  agg <- census |>
-    dplyr::rename(comune = PROCOM) |>
-    dplyr::group_by(comune) |>
-    dplyr::summarise(dplyr::across(dplyr::everything(),
-                                   ~ sum(.x, na.rm = TRUE)),
-                     .groups = "drop")
-
-  # 2. four proxy indicators (higher = more disadvantage) --------------------
-  pop_1564 <- rowSums(
-    dplyr::select(agg, dplyr::all_of(paste0("P", 17:26))),
-    na.rm = TRUE
-  )
-
-  ind <- agg |>
-    dplyr::mutate(
-      edu_low = (P86 + P87 + P88) / P83,   # low education, pop 9+
-      nonemp  = 1 - P101 / pop_1564,        # non-employment, 15-64
-      foreign = ST1 / P1,                   # foreign-resident share
-      crowd   = P1 / A2                     # occupants per dwelling
-    )
-
-  # 3. national standardisation (across all municipalities) ------------------
-  z <- function(v) (v - mean(v, na.rm = TRUE)) / stats::sd(v, na.rm = TRUE)
-
-  ind <- ind |>
-    dplyr::mutate(
-      di_score = z(edu_low) + z(nonemp) + z(foreign) + z(crowd),
-      # 4. national population quintiles (before any filtering)
-      di_quintile = wtd_quantile_group(di_score, P1)
-    )
-
-  # 5. filter to the mortality study area ------------------------------------
-  keep <- pad(as.character(unique(mort_raw[[mort_col]])))
-
-  matched <- sum(ind$comune %in% keep)
-  message(matched, " of ", length(keep),
-          " study municipalities matched in the census data.")
-
-  ind |>
-    dplyr::filter(.data[["comune"]] %in% keep) |>
-    dplyr::select("comune", population = "P1",
-                  "edu_low", "nonemp", "foreign", "crowd",
-                  "di_score", "di_quintile")
-}
+# build_deprivation_proxy() moved to R/deprivation.R and superseded by
+# build_deprivation(), which resolves the index to the modelling areas (NILs
+# inside Milan) instead of stopping at the municipality.
 
 build_pop_area_table <- function(pop_finale, pop_nil, mort_count,
                                  milan_code = "015146") {
@@ -872,7 +847,28 @@ validate_lookup <- function(lookup) {
 #'   misleading: the mechanism is not missing, it does not exist for that death.
 #'   Default \code{NULL} keeps \code{NA}.
 #'
-#' @return A tibble with one row per \code{death_id}.
+#' @section Deaths with two mechanisms in one arm:
+#' A death may carry more than one mechanism \emph{within} an arm. Colorectal
+#' cancer (C18-C21) and female breast cancer (C50) are wholly treatable but
+#' split 50/50 between screening and tertiary prevention, so such a death has
+#' two treatable rows and no preventable row. That is correct data, not a
+#' duplicate; an earlier version of this function rejected it.
+#'
+#' Each arm is therefore \strong{aggregated}, not pivoted: weights are summed
+#' and mechanism labels collapsed with \code{" + "}, giving
+#' \code{mechanism_treatable = "Screening + Tertiary prevention"} and
+#' \code{weight_treatable = 1} for those deaths. \code{n_mechanisms} records
+#' how many were involved.
+#'
+#' The consequence for reporting: \strong{do not compute weighted mechanism
+#' totals from this table}. Counting the collapsed label as one death would
+#' lose half a death from each of the two real mechanisms, and the mechanism
+#' column would stop summing to the death count. Use
+#' \code{\link{build_death_arms}}, or the \code{"arms"} attribute attached to
+#' the result, which keeps one row per (death, type, mechanism).
+#'
+#' @return A tibble with one row per \code{death_id}, carrying the long arm
+#'   table as its \code{"arms"} attribute.
 #'
 #' @examples
 #' \dontrun{
@@ -914,28 +910,21 @@ build_deaths <- function(mort_count,
 
   if (!"death_id" %in% names(mort_count)) {
     stop("`mort_count` has no `death_id`. Assign it in preprocess_mortality() ",
-         "BEFORE the 50/50 fan-out, otherwise the two arms of a split cause ",
+         "BEFORE the 50/50 fan-out, otherwise the arms of a split cause ",
          "cannot be recognised as the same death.", call. = FALSE)
   }
-  if (!type_col %in% names(mort_count)) {
-    stop("`mort_count` has no `", type_col, "` column, so the preventable and ",
-         "treatable arms cannot be told apart. Check that the lookup carries ",
-         "a `type` column and that preprocess_mortality() retains it.",
-         call. = FALSE)
-  }
-  if (!"mechanism" %in% names(mort_count)) {
-    stop("`mort_count` has no `mechanism` column.", call. = FALSE)
-  }
-  if (!"weight" %in% names(mort_count)) {
-    stop("`mort_count` has no `weight` column.", call. = FALSE)
+  for (nm in c(type_col, "mechanism", "weight")) {
+    if (!nm %in% names(mort_count)) {
+      stop("`mort_count` has no `", nm, "` column.", call. = FALSE)
+    }
   }
 
   n_deaths <- dplyr::n_distinct(mort_count$death_id)
   w_total  <- sum(mort_count$weight)
   if (abs(w_total - n_deaths) > 1e-6) {
     stop("sum(weight) = ", w_total, " but there are ", n_deaths,
-         " distinct death_id. A split cause has lost one of its two rows, ",
-         "or a death_id was assigned after the lookup join.", call. = FALSE)
+         " distinct death_id. A split cause has lost one of its arms, or a ",
+         "death_id was assigned after the lookup join.", call. = FALSE)
   }
 
   arm <- tolower(trimws(as.character(mort_count[[type_col]])))
@@ -946,19 +935,31 @@ build_deaths <- function(mort_count,
          ". Expected only 'preventable' and 'treatable'.", call. = FALSE)
   }
 
+  # The uniqueness key is (death_id, type, MECHANISM), not (death_id, type).
+  #
+  # The previous version required at most one row per (death_id, type) and
+  # failed on 1,772 deaths. That requirement was simply wrong about the lookup.
+  # Two causes - colorectal cancer (C18-C21) and female breast cancer (C50) -
+  # are wholly treatable but split 50/50 across two *mechanisms*, screening and
+  # tertiary prevention. Such a death has two treatable rows and no preventable
+  # row, which is correct data, not a duplicate.
+  #
+  # A genuine duplicate is the same mechanism twice within the same arm, and
+  # that is what is checked here.
   dup <- mort_count |>
     dplyr::mutate(.arm = arm) |>
-    dplyr::count(.data[["death_id"]], .data[[".arm"]]) |>
+    dplyr::count(.data[["death_id"]], .data[[".arm"]], .data[["mechanism"]]) |>
     dplyr::filter(.data[["n"]] > 1L)
   if (nrow(dup)) {
-    stop(nrow(dup), " death_id x arm combination(s) appear more than once, ",
-         "e.g. death_id ", dup$death_id[1], ". Each death should have at most ",
-         "one preventable row and one treatable row.", call. = FALSE)
+    stop(nrow(dup), " (death_id, type, mechanism) combination(s) appear more ",
+         "than once, e.g. death_id ", dup$death_id[1], " / ", dup$.arm[1],
+         " / ", dup$mechanism[1], ". A death may carry several mechanisms ",
+         "within one arm, but never the same mechanism twice.", call. = FALSE)
   }
 
-  # Columns that vary within a death (the fanned-out ones) versus those that
-  # identify the decedent. Anything not in `arm_cols` must be constant within
-  # death_id; if it is not, distinct() below would pick arbitrarily.
+  # Columns that vary across a death's arms, versus those identifying the
+  # decedent. Anything outside `arm_cols` must be constant within death_id, or
+  # distinct() below would resolve it arbitrarily.
   arm_cols  <- c("mechanism", type_col, "weight", "flag")
   base_cols <- setdiff(names(mort_count), arm_cols)
 
@@ -985,15 +986,28 @@ build_deaths <- function(mort_count,
     dplyr::distinct(.data[["death_id"]], .keep_all = TRUE) |>
     dplyr::select(dplyr::all_of(base_cols))
 
-  # ---- pivot the arm-varying columns to wide ------------------------------
+  arms <- build_death_arms(mort_count, type_col = type_col)
 
-  wide <- mort_count |>
-    dplyr::mutate(.arm = arm) |>
-    dplyr::select(dplyr::all_of(c("death_id", ".arm", "mechanism", "weight"))) |>
+  # ---- aggregate each arm, rather than pivoting it -----------------------
+  #
+  # Summing the weight and collapsing the mechanism labels is what makes this
+  # robust to the number of mechanisms in an arm. Pivoting on `type` alone
+  # could only ever represent one mechanism per arm, which is why it broke.
+  by_arm <- arms |>
+    dplyr::group_by(.data[["death_id"]], .data[[".arm"]]) |>
+    dplyr::summarise(
+      weight    = sum(.data[["weight"]]),
+      mechanism = paste(sort(unique(as.character(.data[["mechanism"]]))),
+                        collapse = " + "),
+      n_mech    = dplyr::n(),
+      .groups   = "drop"
+    )
+
+  wide <- by_arm |>
     tidyr::pivot_wider(
       id_cols     = dplyr::all_of("death_id"),
       names_from  = ".arm",
-      values_from = dplyr::all_of(c("mechanism", "weight")),
+      values_from = dplyr::all_of(c("mechanism", "weight", "n_mech")),
       names_glue  = "{.value}_{.arm}"
     )
 
@@ -1004,8 +1018,33 @@ build_deaths <- function(mort_count,
   for (nm in c("weight_preventable", "weight_treatable")) {
     if (!nm %in% names(wide)) wide[[nm]] <- NA_real_
   }
+  for (nm in c("n_mech_preventable", "n_mech_treatable")) {
+    if (!nm %in% names(wide)) wide[[nm]] <- NA_integer_
+  }
 
-  mech_levels <- sort(unique(stats::na.omit(as.character(mort_count$mechanism))))
+  # mechanism_any: every mechanism the death touches, in one label. Computed
+  # from `arms` and joined BY death_id - not by row position. `wide` and `base`
+  # need not be in the same order, and indexing one while assigning into the
+  # other mismatches deaths silently.
+  mech_any <- arms |>
+    dplyr::group_by(.data[["death_id"]]) |>
+    dplyr::summarise(
+      mechanism_any = paste(sort(unique(as.character(.data[["mechanism"]]))),
+                            collapse = " + "),
+      .groups = "drop"
+    )
+  wide <- dplyr::left_join(wide, mech_any, by = "death_id")
+
+  # Factor levels: the single mechanisms first, then any combination label that
+  # actually occurs. The combinations must be read off all three columns, not
+  # just the two arm columns: a death split ACROSS the two lists has a single
+  # mechanism in each arm but a combined `mechanism_any`, so levels taken from
+  # the arm columns alone would turn all seven such causes into NA.
+  singles  <- sort(unique(stats::na.omit(as.character(mort_count$mechanism))))
+  observed <- unique(stats::na.omit(c(wide$mechanism_preventable,
+                                      wide$mechanism_treatable,
+                                      wide$mechanism_any)))
+  mech_levels <- c(singles, sort(setdiff(observed, singles)))
 
   out <- base |>
     dplyr::left_join(wide, by = "death_id") |>
@@ -1028,18 +1067,17 @@ build_deaths <- function(mort_count,
         levels = c("Preventable only", "Treatable only",
                    "Preventable and treatable")
       ),
-      mechanism_any = factor(
-        dplyr::coalesce(.data[["mechanism_preventable"]],
-                        .data[["mechanism_treatable"]]),
-        levels = mech_levels
-      ),
+      mechanism_any = factor(.data[["mechanism_any"]], levels = mech_levels),
       mechanism_preventable = factor(.data[["mechanism_preventable"]],
                                      levels = mech_levels),
       mechanism_treatable   = factor(.data[["mechanism_treatable"]],
                                      levels = mech_levels),
       weight_preventable = tidyr::replace_na(.data[["weight_preventable"]], 0),
-      weight_treatable   = tidyr::replace_na(.data[["weight_treatable"]], 0)
-    )
+      weight_treatable   = tidyr::replace_na(.data[["weight_treatable"]], 0),
+      n_mechanisms       = dplyr::coalesce(.data[["n_mech_preventable"]], 0L) +
+                           dplyr::coalesce(.data[["n_mech_treatable"]], 0L)
+    ) |>
+    dplyr::select(-dplyr::any_of(c("n_mech_preventable", "n_mech_treatable")))
 
   # Explicit level instead of NA, so gtsummary does not report "Unknown" for
   # cells where the mechanism does not exist rather than being missing.
@@ -1060,6 +1098,14 @@ build_deaths <- function(mort_count,
   stopifnot(
     abs(sum(out$weight_preventable) + sum(out$weight_treatable) - n_deaths) < 1e-6
   )
+  stopifnot(!any(is.na(out$mechanism_any)))
+
+  # The long arms table travels with the result, because any WEIGHTED tally by
+  # mechanism has to come from it. Collapsing "Screening + Tertiary prevention"
+  # into one label is right for a person-level table and wrong for a mechanism
+  # total: counting that label as one death would silently lose 0.5 from each
+  # of the two real mechanisms.
+  attr(out, "arms") <- arms
 
   # ---- labels for gtsummary ----------------------------------------------
 
@@ -1069,11 +1115,62 @@ build_deaths <- function(mort_count,
     avoidability          = "Avoidability category",
     mechanism_preventable = "Preventive service function",
     mechanism_treatable   = "Treatment service function",
-    mechanism_any         = "Service function"
+    mechanism_any         = "Service function",
+    n_mechanisms          = "Number of service functions"
   )
   for (nm in names(labs)) {
     if (nm %in% names(out)) attr(out[[nm]], "label") <- unname(labs[nm])
   }
 
+  out
+}
+
+
+#' The tidy arm table behind a set of deaths
+#'
+#' One row per (death, avoidability type, mechanism), carrying the fractional
+#' weight. This is the correct input for any \strong{weighted} tally by
+#' mechanism, and [build_deaths()] attaches it to its own result as the
+#' \code{"arms"} attribute.
+#'
+#' It exists because collapsing a death's mechanisms into a single label is
+#' right for a person-level table and wrong for a mechanism total. A female
+#' breast cancer death is 0.5 screening and 0.5 tertiary prevention; the
+#' person-level table should show it once, as one person, but the mechanism
+#' totals must receive half a death each. Two different questions, two
+#' different tables, and conflating them is how a mechanism column ends up not
+#' summing to the number of deaths.
+#'
+#' @param mort_count Output of [preprocess_mortality()].
+#' @param type_col Name of the avoidability-type column.
+#'
+#' @return A tibble: \code{death_id}, \code{.arm} (lower-case type),
+#'   \code{type}, \code{mechanism}, \code{weight}, and the area key when
+#'   present. Weights sum to one within each death.
+#'
+#' @examples
+#' \dontrun{
+#' arms <- build_death_arms(mort_count_area)
+#' # weighted mechanism totals, which DO sum to the number of deaths
+#' dplyr::count(arms, mechanism, wt = weight)
+#' }
+#' @seealso [build_deaths()]
+#' @export
+build_death_arms <- function(mort_count, type_col = "type") {
+
+  keep <- c("death_id", type_col, "mechanism", "weight",
+            intersect(c("area_residenza", "cause", "group", "eta", "sesso",
+                        "sex", "anno"), names(mort_count)))
+
+  out <- mort_count |>
+    dplyr::select(dplyr::all_of(unique(keep))) |>
+    dplyr::mutate(.arm = tolower(trimws(as.character(.data[[type_col]]))))
+
+  w <- sum(out[["weight"]])
+  n <- dplyr::n_distinct(out[["death_id"]])
+  if (abs(w - n) > 1e-6) {
+    stop("Arm weights sum to ", w, " across ", n, " deaths; they must sum to ",
+         "the death count.", call. = FALSE)
+  }
   out
 }

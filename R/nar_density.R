@@ -43,10 +43,19 @@
 # No residents x months grid is ever materialised: each month touches at most
 # one row per living resident and collects only per-area aggregates.
 
-library(dplyr)
-library(lubridate)
-library(purrr)
-library(tibble)
+# NOTE: this file previously attached dplyr, lubridate, purrr and tibble with
+# library() at the top. That is a package-level side effect: it modifies the
+# search path of whoever loads atlaspm, and R CMD check rejects it. Every call
+# below is now namespaced, and the packages are declared in DESCRIPTION.
+
+#' @importFrom dplyr filter mutate select group_by summarise arrange left_join
+#' @importFrom dplyr n distinct bind_rows if_else coalesce
+#' @importFrom lubridate floor_date year
+#' @importFrom stats runif rgamma
+#' @importFrom tibble tibble
+#' @name nar-imports
+#' @keywords internal
+NULL
 
 # ---------------------------------------------------------------------------
 
@@ -90,72 +99,72 @@ simulate_nar <- function(n_residents = 2000,
                          seed = 42L) {
   set.seed(seed)
 
-  residents <- tibble(
+  residents <- tibble::tibble(
     resident_id = sprintf("R%05d", seq_len(n_residents)),
     area_id     = sprintf("A%02d", sample.int(n_areas, n_residents,
                                               replace = TRUE,
-                                              prob = runif(n_areas, 0.5, 2)))
+                                              prob = stats::runif(n_areas, 0.5, 2)))
   )
 
-  gps <- tibble(
+  gps <- tibble::tibble(
     gp_id      = sprintf("G%03d", seq_len(n_gps)),
     birth_year = sample(1955:1985, n_gps, replace = TRUE)
   )
 
-  gp_weight <- rgamma(n_gps, shape = 1.5)
+  gp_weight <- stats::rgamma(n_gps, shape = 1.5)
   retiring  <- sample(gps$gp_id, size = round(n_gps * p_gp_retires))
   retire_date <- setNames(
     sample(seq(study_start + 120, study_end - 120, by = "day"),
            length(retiring), replace = TRUE),
     retiring
   )
-  never_assigned <- runif(n_residents) < p_never_assigned
-  dies       <- runif(n_residents) < p_dies
+  never_assigned <- stats::runif(n_residents) < p_never_assigned
+  dies       <- stats::runif(n_residents) < p_dies
   death_date <- as.Date(ifelse(
     dies, sample(seq(study_start + 30, study_end, by = "day"),
                  n_residents, replace = TRUE), NA), origin = "1970-01-01")
 
-  events <- pmap(list(residents$resident_id, never_assigned, death_date),
+  events <- purrr::pmap(list(residents$resident_id, never_assigned, death_date),
                  function(rid, never, ddate) {
     ev <- NULL
     if (!never) {
       # Anchor: most residents' current choice predates the window (the SAS
       # export carries exactly one such row); some first register in-window.
-      start <- if (runif(1) < 0.85) study_start - sample(30:1000, 1)
+      start <- if (stats::runif(1) < 0.85) study_start - sample(30:1000, 1)
                else sample(seq(study_start, study_end - 60, by = "day"), 1)
       gp <- sample(gps$gp_id, 1, prob = gp_weight)
-      ev <- tibble(resident_id = rid, event_date = start,
+      ev <- tibble::tibble(resident_id = rid, event_date = start,
                    event_type = "assignment", gp_id = gp)
       if (gp %in% retiring && retire_date[[gp]] > start &&
           (is.na(ddate) || retire_date[[gp]] < ddate)) {
         gap    <- sample(reassignment_gap_days[1]:reassignment_gap_days[2], 1)
         new_gp <- sample(setdiff(gps$gp_id, gp), 1)
-        ev <- bind_rows(
+        ev <- dplyr::bind_rows(
           ev,
-          tibble(resident_id = rid, event_date = retire_date[[gp]],
+          tibble::tibble(resident_id = rid, event_date = retire_date[[gp]],
                  event_type = "revocation", gp_id = NA_character_),
-          tibble(resident_id = rid, event_date = retire_date[[gp]] + gap,
+          tibble::tibble(resident_id = rid, event_date = retire_date[[gp]] + gap,
                  event_type = "assignment", gp_id = new_gp))
-      } else if (runif(1) < 0.10) {
+      } else if (stats::runif(1) < 0.10) {
         change_day <- sample(seq(pmax(start + 30, study_start),
                                  study_end, by = "day"), 1)
         if (is.na(ddate) || change_day < ddate) {
-          ev <- bind_rows(
+          ev <- dplyr::bind_rows(
             ev,
-            tibble(resident_id = rid, event_date = change_day,
+            tibble::tibble(resident_id = rid, event_date = change_day,
                    event_type = "assignment",
                    gp_id = sample(setdiff(gps$gp_id, gp), 1)))
         }
       }
     }
     if (!is.na(ddate)) {
-      ev <- bind_rows(
+      ev <- dplyr::bind_rows(
         ev,
-        tibble(resident_id = rid, event_date = ddate,
+        tibble::tibble(resident_id = rid, event_date = ddate,
                event_type = "death", gp_id = NA_character_))
     }
     ev
-  }) |> list_rbind() |> arrange(resident_id, event_date)
+  }) |> purrr::list_rbind() |> dplyr::arrange(resident_id, event_date)
 
   list(residents = residents, gps = gps, events = events)
 }
@@ -178,14 +187,14 @@ simulate_nar <- function(n_residents = 2000,
 #' @export
 build_spells <- function(events, study_end) {
   events |>
-    arrange(resident_id, event_date) |>
-    group_by(resident_id) |>
-    mutate(spell_end = coalesce(lead(event_date) - days(1), study_end)) |>
-    ungroup() |>
-    filter(event_type == "assignment") |>
-    transmute(resident_id, gp_id, spell_start = event_date,
+    dplyr::arrange(resident_id, event_date) |>
+    dplyr::group_by(resident_id) |>
+    dplyr::mutate(spell_end = dplyr::coalesce(dplyr::lead(event_date) - lubridate::days(1), study_end)) |>
+    dplyr::ungroup() |>
+    dplyr::filter(event_type == "assignment") |>
+    dplyr::transmute(resident_id, gp_id, spell_start = event_date,
               spell_end = pmin(spell_end, study_end)) |>
-    filter(spell_end >= spell_start)
+    dplyr::filter(spell_end >= spell_start)
 }
 
 # ---------------------------------------------------------------------------
@@ -208,14 +217,14 @@ build_spells <- function(events, study_end) {
 #' @export
 build_observation <- function(residents, events, study_end) {
   deaths <- events |>
-    filter(event_type == "death") |>
-    group_by(resident_id) |>
-    summarise(death_date = min(event_date), .groups = "drop")
+    dplyr::filter(event_type == "death") |>
+    dplyr::group_by(resident_id) |>
+    dplyr::summarise(death_date = min(event_date), .groups = "drop")
 
   residents |>
-    left_join(deaths, by = "resident_id") |>
-    mutate(obs_end = pmin(coalesce(death_date, study_end), study_end)) |>
-    select(resident_id, area_id, obs_end)
+    dplyr::left_join(deaths, by = "resident_id") |>
+    dplyr::mutate(obs_end = pmin(dplyr::coalesce(death_date, study_end), study_end)) |>
+    dplyr::select(resident_id, area_id, obs_end)
 }
 
 # ---------------------------------------------------------------------------
@@ -256,16 +265,16 @@ clamp_supply <- function(list_sizes,
                          artifact_min_patients = 2L) {
   stopifnot(l_min <= l_max, artifact_min_patients >= 0)
   list_sizes |>
-    mutate(
+    dplyr::mutate(
       is_artifact = list_size < artifact_min_patients,
       l_clamped   = pmin(pmax(list_size, l_min), l_max),
-      clamp_status = case_when(
+      clamp_status = dplyr::case_when(
         is_artifact       ~ "artifact",
         list_size < l_min ~ "raised_to_min",
         list_size > l_max ~ "capped_at_max",
         TRUE              ~ "kept"
       ),
-      supply = if_else(is_artifact, NA_real_, 1 / l_clamped)
+      supply = dplyr::if_else(is_artifact, NA_real_, 1 / l_clamped)
     )
 }
 
@@ -326,8 +335,8 @@ compute_density_by_area <- function(spells,
                                     artifact_min_patients = 2L,
                                     gps = NULL,
                                     progress = TRUE) {
-  months_grid <- seq(floor_date(study_start, "month"),
-                     floor_date(study_end, "month"), by = "month")
+  months_grid <- seq(lubridate::floor_date(study_start, "month"),
+                     lubridate::floor_date(study_end, "month"), by = "month")
 
   has_cli <- requireNamespace("cli", quietly = TRUE)
   if (progress && has_cli) {
@@ -351,55 +360,55 @@ compute_density_by_area <- function(spells,
 
     # 1. Denominator: residents alive (under observation) on day 1 of m.
     alive_m <- residents |>
-      filter(obs_end >= m) |>
-      count(area_id, name = "n_alive") |>
-      collect()
+      dplyr::filter(obs_end >= m) |>
+      dplyr::count(area_id, name = "n_alive") |>
+      dplyr::collect()
 
     # 2. Assignment state on day 1 of m. Spells cannot outlive obs_end by
     # construction (death is an event), so no extra filter is needed here.
     active <- spells |>
-      filter(spell_start <= m, spell_end >= m)
+      dplyr::filter(spell_start <= m, spell_end >= m)
 
     # 3. Observed monthly list sizes -> visible assumptions.
     lists_m <- active |>
-      count(gp_id, name = "list_size") |>
-      collect() |>
+      dplyr::count(gp_id, name = "list_size") |>
+      dplyr::collect() |>
       clamp_supply(l_min = l_min, l_max = l_max,
                    artifact_min_patients = artifact_min_patients)
 
     if (!is.null(gps)) {
       lists_m <- lists_m |>
-        left_join(gps, by = "gp_id") |>
-        mutate(gp_65plus = (year(m) - birth_year) >= 65)
+        dplyr::left_join(gps, by = "gp_id") |>
+        dplyr::mutate(gp_65plus = (lubridate::year(m) - birth_year) >= 65)
     } else {
-      lists_m <- mutate(lists_m, gp_65plus = NA)
+      lists_m <- dplyr::mutate(lists_m, gp_65plus = NA)
     }
 
     clamps[[i]] <- lists_m |>
-      group_by(clamp_status) |>
-      summarise(n_gps = n(), person_months = sum(list_size),
+      dplyr::group_by(clamp_status) |>
+      dplyr::summarise(n_gps = dplyr::n(), person_months = sum(list_size),
                 .groups = "drop") |>
-      mutate(month = m)
+      dplyr::mutate(month = m)
 
     # 4. Per-area aggregation of assigned person-time.
     assigned_m <- active |>
-      inner_join(residents, by = "resident_id") |>
-      count(area_id, gp_id, name = "n_patients") |>
-      collect() |>
-      left_join(lists_m, by = "gp_id") |>
-      group_by(area_id) |>
-      summarise(
+      dplyr::inner_join(residents, by = "resident_id") |>
+      dplyr::count(area_id, gp_id, name = "n_patients") |>
+      dplyr::collect() |>
+      dplyr::left_join(lists_m, by = "gp_id") |>
+      dplyr::group_by(area_id) |>
+      dplyr::summarise(
         assigned_pm = sum(n_patients * !is_artifact),
         artifact_pm = sum(n_patients * is_artifact),
-        supply_sum  = sum(n_patients * coalesce(supply, 0)),
+        supply_sum  = sum(n_patients * dplyr::coalesce(supply, 0)),
         list_pm_sum = sum(n_patients * list_size * !is_artifact),
-        gp65_pm     = sum(n_patients * coalesce(as.numeric(gp_65plus), 0) *
+        gp65_pm     = sum(n_patients * dplyr::coalesce(as.numeric(gp_65plus), 0) *
                           !is_artifact),
         .groups = "drop")
 
     monthly[[i]] <- alive_m |>
-      left_join(assigned_m, by = "area_id") |>
-      mutate(across(-c(area_id, n_alive), ~ coalesce(.x, 0)),
+      dplyr::left_join(assigned_m, by = "area_id") |>
+      dplyr::mutate(dplyr::across(-c(area_id, n_alive), ~ dplyr::coalesce(.x, 0)),
              month = m,
              unassigned_pm = n_alive - assigned_pm)
 
@@ -409,16 +418,16 @@ compute_density_by_area <- function(spells,
   }
   if (progress && has_cli) cli::cli_progress_done(id = bar)
 
-  by_month <- list_rbind(monthly) |>
-    mutate(
+  by_month <- purrr::list_rbind(monthly) |>
+    dplyr::mutate(
       gp_density              = supply_sum / n_alive,
       prop_unassigned         = unassigned_pm / n_alive,
-      mean_list_size_assigned = if_else(assigned_pm > 0,
+      mean_list_size_assigned = dplyr::if_else(assigned_pm > 0,
                                         list_pm_sum / assigned_pm, NA_real_))
 
   density <- by_month |>
-    group_by(area_id) |>
-    summarise(
+    dplyr::group_by(area_id) |>
+    dplyr::summarise(
       person_months           = sum(n_alive),
       gp_density              = sum(supply_sum) / sum(n_alive),
       gp_density_per_100k     = gp_density * 1e5,
@@ -431,13 +440,13 @@ compute_density_by_area <- function(spells,
                                 else NA_real_,
       .groups = "drop")
 
-  clamp_report <- list_rbind(clamps) |>
-    select(month, clamp_status, n_gps, person_months)
+  clamp_report <- purrr::list_rbind(clamps) |>
+    dplyr::select(month, clamp_status, n_gps, person_months)
 
   if (progress && has_cli) {
     tot <- clamp_report |>
-      group_by(clamp_status) |>
-      summarise(pm = sum(person_months), .groups = "drop")
+      dplyr::group_by(clamp_status) |>
+      dplyr::summarise(pm = sum(person_months), .groups = "drop")
     denom <- sum(tot$pm)
     for (s in c("raised_to_min", "capped_at_max", "artifact")) {
       pm <- tot$pm[tot$clamp_status == s]
@@ -450,10 +459,10 @@ compute_density_by_area <- function(spells,
   list(
     density  = density,
     by_month = by_month |>
-      select(area_id, month, n_alive, gp_density, prop_unassigned,
+      dplyr::select(area_id, month, n_alive, gp_density, prop_unassigned,
              mean_list_size_assigned, assigned_pm, artifact_pm),
     clamp_report = clamp_report,
-    assumptions  = tibble(
+    assumptions  = tibble::tibble(
       l_min = l_min, l_max = l_max,
       artifact_min_patients = artifact_min_patients,
       supply_lower = 1 / l_max, supply_upper = 1 / l_min,
@@ -486,8 +495,8 @@ compute_density_by_area <- function(spells,
 #   tar_target(density, {
 #     con <- DBI::dbConnect(duckdb::duckdb(), db_path, read_only = TRUE)
 #     on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
-#     compute_density_by_area(dplyr::tbl(con, "spells"),
-#                             dplyr::tbl(con, "residents"),
+#     compute_density_by_area(tbl(con, "spells"),
+#                             tbl(con, "residents"),
 #                             study_start, study_end,
 #                             l_min = 500, l_max = 2000,
 #                             artifact_min_patients = 2L, gps = gps_table)
