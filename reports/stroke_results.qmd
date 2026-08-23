@@ -1,0 +1,580 @@
+---
+title: "Stroke sub-model — access to time-critical care"
+subtitle: "Objective 3. Generated from the `targets` pipeline; do not edit by hand."
+date: today
+format:
+  html: 
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Sections"
+    embed-resources: true
+    fig-width: 7.5
+    fig-height: 6
+    fig-align: center
+    tbl-cap-location: top
+    df-print: kable
+    code-tools: false
+    link-external-newwindow: true
+execute:
+  echo: false
+  warning: false
+  message: false
+knitr:
+  opts_chunk:
+    dev: "png"
+    dpi: 300
+    fig.path: "../output/figures/stroke-"
+---
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(targets)
+
+tar_source(here::here("R"))
+source(here::here("reports", "_thesis_setup.R"))
+
+tar_load(c(
+  area_shp, stroke_centres, stroke_times, stroke_area, diag_stroke,
+  smr_geo_full, smr_geo_tracer, smr_geo_allage, C_matrix,
+  control_fits, control_table, control_diagnostics,
+  stroke_times_table, exposure_contrast_table, tracer_per_10min,
+  tracer_engine_table, tracer_exposure_table,
+  outcome_feasibility_table, allage_table, allage_diagnostics,
+  mort_raw
+))
+```
+
+::: {.callout-note}
+## What this report is for
+
+The main results document reports the tracer coefficient. This one asks the
+prior question: **could this design have detected an effect if one existed?**
+A null coefficient from an exposure with no contrast, or from an outcome the
+exposure cannot plausibly move, is not evidence of no effect — and the two are
+indistinguishable in a coefficient table.
+:::
+
+# 1. The stroke network
+
+## 1.1 Centres, for verification
+
+The DGR node list gives a comune, not a street address, so the coordinate is
+the address for checking purposes. **Open a few of the map links** — especially
+any row whose `source` is not the regional registry. A facility resolved to the
+wrong side of a city silently changes the catchment of every area around it,
+and no automated check will catch it.
+
+```{r centre-table}
+stroke_centre_table(stroke_centres) |>
+  kable(col.names = c("ID", "Facility", "Level", "Ente", "Comune", "Prov.",
+                      "Lat", "Lon", "Geocoded via", "Map"),
+        caption = "Every accredited stroke centre used in the routing, including those outside the ATS Milano territory.")
+```
+
+```{r centre-source-summary}
+sf::st_drop_geometry(stroke_centres) |>
+  count(is_hub, geocode_source) |>
+  mutate(is_hub = ifelse(is_hub, "Hub (SU II)", "Spoke (SU I)")) |>
+  kable(col.names = c("Level", "Geocoding source", "n"),
+        caption = "How each centre was located. Manual overrides and Nominatim results deserve the closest look.")
+```
+
+## 1.2 Where they are
+
+```{r fig-centres, fig.cap="Accredited stroke centres over the study area. Centres outside the ATS Milano boundary are included in the routing because residents near the edge may be closer to them."}
+plot_stroke_centres(
+  area_shp, stroke_centres,
+  caption = "Triangles: level-II hubs performing mechanical thrombectomy. Circles: spoke stroke units."
+)
+```
+
+# 2. Where strokes are killing people
+
+Cerebrovascular mortality, ages 0–74, 2022–2024, indirectly standardised for
+age and sex. This is the tracer outcome.
+
+```{r fig-cvd-map, fig.cap="Cerebrovascular SMR by areal unit. Hubs overlaid."}
+g <- sf::st_as_sf(smr_geo_tracer)
+g$cvd_smr <- g$cvd_obs / g$cvd_exp
+
+ggplot(g) +
+  geom_sf(aes(fill = cvd_smr), colour = NA) +
+  geom_sf(data = sf::st_transform(sf::st_as_sf(stroke_centres)[stroke_centres$is_hub, ],
+                                  sf::st_crs(g)),
+          shape = 24, fill = "#d94801", colour = "grey10", size = 2.2) +
+  scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#8c2d04",
+                       midpoint = 1, name = "SMR") +
+  theme_atlas(map = TRUE)
+```
+
+## 2.1 What kind of strokes are these?
+
+The mechanism the exposure is supposed to act through depends entirely on this
+table. Thrombectomy acts on cerebral infarction (I63) alone; neurosurgical and
+neurocritical care act on the haemorrhagic subtypes (I60-I62).
+
+```{r subtype}
+sub <- mort_raw |>
+  mutate(key = toupper(gsub("[^A-Za-z0-9]", "", causa))) |>
+  filter(startsWith(key, "I6"), eta < 75) |>
+  mutate(k3 = substr(key, 1, 3),
+         subtype = case_when(
+           k3 == "I63"                ~ "I63 Cerebral infarction (thrombectomy)",
+           k3 %in% c("I60","I61","I62") ~ "I60-I62 Haemorrhagic (neurosurgery)",
+           k3 == "I64"                ~ "I64 Stroke, type not specified",
+           k3 == "I69"                ~ "I69 Sequelae",
+           TRUE                       ~ paste(k3, "Other cerebrovascular")
+         )) |>
+  count(subtype, name = "deaths") |>
+  mutate(pct = 100 * deaths / sum(deaths)) |>
+  arrange(desc(deaths))
+
+sub |>
+  mutate(pct = fmt_pct(pct)) |>
+  kable(col.names = c("Subtype", "Deaths", "%"),
+        caption = "Cerebrovascular deaths under 75, by subtype. Note which channel each belongs to.")
+```
+
+```{r dilution, results="asis"}
+i63  <- sum(sub$deaths[grepl("^I63", sub$subtype)])
+haem <- sum(sub$deaths[grepl("^I60", sub$subtype)])
+tot  <- sum(sub$deaths)
+lvo <- 0.20; win <- 0.50
+thromb <- (i63 / tot) * lvo * win
+
+cat(sprintf(paste0(
+  "\n> **Dilution.** If the exposure acted through thrombectomy alone it could ",
+  "touch %s of this outcome (%s I63 x ~%.0f%% large-vessel occlusion x ~%.0f%% ",
+  "presenting in window). A 30%% mortality reduction in that subset would move ",
+  "total cerebrovascular mortality by %s - far below anything this design can ",
+  "resolve. Adding the neurosurgical channel (%s haemorrhagic) raises the ",
+  "reachable fraction to about %s, which is the same order as the credible ",
+  "interval in §5.5. **This is the argument for reframing the exposure rather ",
+  "than narrowing the outcome.**\n\n"),
+  fmt_pct(100*thromb), fmt_pct(100*i63/tot), 100*lvo, 100*win,
+  fmt_pct(100*thromb*0.30), fmt_pct(100*haem/tot),
+  fmt_pct(100*(thromb + haem/tot))))
+```
+
+```{r cvd-counts}
+tibble::tibble(
+  Quantity = c("Cerebrovascular deaths, 0-74, 2022-2024",
+               "Deaths per year",
+               "Areal units with zero deaths",
+               "Median expected count per area",
+               "Areal units with expected count < 5"),
+  Value = c(
+    fmt_n(sum(g$cvd_obs)),
+    fmt_n(sum(g$cvd_obs) / 3),
+    fmt_n(sum(g$cvd_obs == 0)),
+    fmt_num(median(g$cvd_exp), 1),
+    fmt_n(sum(g$cvd_exp < 5))
+  )
+) |>
+  kable(caption = "The tracer outcome. Sparse counts widen every interval that follows.")
+```
+
+# 3. Travel time
+
+```{r fig-hub-time, fig.cap="Population-weighted travel time to the nearest level-II thrombectomy hub."}
+plot_travel_time(smr_geo_full, "t_hub_mean", centres = stroke_centres,
+                 caption = "Routed on the OSM network with AREU emergency speeds, from population-weighted census-section origins.")
+```
+
+```{r fig-centre-time, fig.cap="Population-weighted travel time to the nearest accredited stroke centre of any level."}
+plot_travel_time(smr_geo_full, "t_centre_mean", centres = NULL,
+                 caption = "Includes spoke units, which give thrombolysis but not thrombectomy.")
+```
+
+```{r time-table}
+stroke_times_table |>
+  select(-column) |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 1))) |>
+  kable(col.names = c("Measure", "n", "Missing", "Mean", "SD", "Min", "P25",
+                      "Median", "P75", "Max"),
+        caption = "Travel-time distribution across the 279 areal units.")
+```
+
+## 3.1 Routing diagnostics
+
+```{r routing-diag}
+tibble::tibble(
+    Diagnostic = c("Population covered by the routing",
+                 "Mean time to nearest centre (min)",
+                 "Mean time to nearest hub (min)",
+                 "Residents >45 min from a hub",
+                 "Largest centroid-vs-section bias (min)"),
+  Value = c(fmt_n(diag_stroke$headline$pop_covered),
+            fmt_num(diag_stroke$headline$mean_to_centre, 1),
+            fmt_num(diag_stroke$headline$mean_to_hub, 1),
+            fmt_pct(100 * diag_stroke$headline$share_over_45),
+            fmt_num(diag_stroke$headline$max_centroid_bias, 1))
+  ) |>
+  kable(caption = "The last row is what routing from area centroids would have cost: the largest per-area discrepancy against the population-weighted section mean.")
+```
+
+# 4. Could this design detect an effect? {#sec-contrast}
+
+::: {.callout-important}
+Read this section before the coefficients. Everything in §5 is conditional on
+the answer here.
+:::
+
+```{r layer-variance}
+diag_stroke$layer_variance |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 2))) |>
+  kable(col.names = c("Layer", "n", "Mean", "SD", "Min", "Max"),
+        caption = "Travel-time variation within each layer of the geography. The NIL layer is the one to look at: it is 87 of the 279 units.")
+```
+
+
+```{r contrast}
+ec <- exposure_contrast(smr_geo_full, C = C_matrix)
+
+ec |>
+  select(measure, min, median, max, range_min, sd, iqr, moran_i) |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 1))) |>
+  kable(col.names = c("Measure", "Min", "Median", "Max", "Range", "SD", "IQR",
+                      "Moran's I"),
+        caption = "Spread of the exposure. A narrow range means there is no contrast to detect, however precisely the coefficient is estimated.")
+
+ec |>
+  select(measure, starts_with("n_over"), starts_with("pct_pop_over")) |>
+  mutate(across(starts_with("pct"), \(x) fmt_pct(x))) |>
+  kable(col.names = c("Measure", "Areas >30 min", ">45 min", ">60 min",
+                      "% pop >30 min", ">45 min", ">60 min"),
+        caption = "Areas and population beyond clinically meaningful thresholds. 45 minutes is the DGR's own mothership centralisation criterion.")
+```
+
+```{r contrast-verdict, results="asis"}
+hub <- ec[ec$measure == "t_hub_mean", ]
+if (nrow(hub)) {
+  n45 <- hub[["n_over_45"]]
+  cat(sprintf(
+    paste0("\n> **Verdict.** Travel time to a thrombectomy hub spans %s to %s ",
+           "minutes (range %s minutes, SD %s). %s areal unit(s) lie beyond the ",
+           "45-minute mothership threshold, covering %s of the population.%s\n\n"),
+    fmt_num(hub$min, 1), fmt_num(hub$max, 1), fmt_num(hub$range_min, 1),
+    fmt_num(hub$sd, 1), fmt_n(n45), fmt_pct(hub[["pct_pop_over_45"]]),
+    if (n45 == 0)
+      paste0(" **No area in the study is beyond the threshold the regional",
+             " network itself uses to define inadequate access.** The design",
+             " cannot test the centralisation criterion, because the ATS",
+             " Milano territory does not contain the contrast.")
+    else ""
+  ))
+  cat(sprintf(
+    paste0("> The exposure has a Moran's I of %s, i.e. it is a smooth spatial ",
+           "surface. It therefore competes directly with the BYM2 random ",
+           "effect for the same variation — see §5.2.\n\n"),
+    fmt_num(hub$moran_i, 3)))
+}
+```
+
+# 5. Models
+
+## 5.1 The raw association, before any model
+
+```{r fig-raw, fig.cap="Cerebrovascular SMR against travel time to the nearest hub. Point size is the expected count, so the large points are the areas the model actually learns from."}
+plot_tracer_raw(smr_geo_tracer, "t_hub_mean")
+```
+
+## 5.2 Road A — what is the exposure actually a proxy for?
+
+A level-II centre is not only a thrombectomy centre. It provides neurosurgical
+and neurocritical care, and that channel acts on haemorrhagic stroke — which is
+the **majority** of premature cerebrovascular deaths here (see §2.1). The
+mechanism written into the Methods was thrombectomy alone, which reaches only
+a few per cent of this outcome; the neurosurgical channel reaches about half.
+
+Organised stroke-unit care of any level also has better evidence for a
+population mortality effect than thrombectomy specifically, so both destination
+sets are fitted.
+
+```{r exposure-table}
+tracer_exposure_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Destination set", "Term", "RR per SD", "2.5%", "97.5%",
+                      "ESS", "R-hat"),
+        caption = "Cerebrovascular mortality 0-74 against travel time to two different destination sets.")
+```
+
+## 5.3 Is the null real, or is the exposure unidentified?
+
+The exposure is a smooth spatial surface and so is the BYM2 random effect. When
+two terms describe the same variation, the data cannot say which owns it and
+the covariate coefficient is pulled toward zero regardless of whether an effect
+exists. Fitting the same tracer under three treatments of spatial structure
+separates "no association" from "not identified".
+
+**Watch the effective sample size**, not just the interval. A low ESS
+concentrated on the exposure coefficient, while the intercept samples freely,
+is the signature of a covariate trading off against the random effect.
+
+```{r engine-table}
+tracer_engine_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Specification", "Term", "RR per SD", "2.5%", "97.5%",
+                      "ESS", "R-hat"),
+        caption = "The same tracer under three treatments of spatial structure.")
+```
+
+```{r engine-verdict, results="asis"}
+te <- tracer_engine_table
+g  <- te$estimate[grepl("GLM", te$model)]
+b  <- te$estimate[te$model == "BYM2"]
+if (length(g) && length(b)) {
+  cat(if (abs(log(g)) > 2 * abs(log(b)))
+    paste0("\n> **The association is much larger without the spatial term.** ",
+           "That is an identification result, not a substantive one: the BYM2 ",
+           "random effect is absorbing the travel-time gradient. Neither ",
+           "estimate should be read as the effect of access; what the data ",
+           "support is that the exposure and the spatial structure are not ",
+           "separable at this resolution.\n\n")
+  else
+    paste0("\n> The estimate is stable across specifications, so the null is ",
+           "not an artefact of the spatial term competing with the exposure.\n\n"))
+}
+```
+
+## 5.4 The control panel
+
+```{r control-table}
+control_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(role, outcome, label, estimate, ci_low, ci_high, verdict) |>
+  kable(col.names = c("Role", "Outcome", "Exposure", "RR per SD", "2.5%",
+                      "97.5%", "Verdict"),
+        caption = "Tracer and controls. The verdict column checks direction against the pre-specified expectation, not merely whether the interval clears the null.")
+```
+
+```{r control-expectations}
+control_table |>
+  select(role, expectation) |>
+  kable(col.names = c("Role", "Pre-specified expectation"),
+        caption = "Written before the estimates were seen.")
+```
+
+## 5.5 The coefficient in clinical units
+
+"Per standard deviation" is not a unit anyone can act on, and it hides the
+range-restriction problem: a small SD makes a null look like strong evidence
+when it is really evidence about a contrast nobody cares about.
+
+```{r mde}
+mde <- mde_per_unit(control_fits$tracer, smr_geo_tracer, "t_hub_mean", per = 10)
+
+mde |>
+  mutate(across(c(sd_raw, rr, ci_low, ci_high, rules_out_above, p_direction),
+                \(x) fmt_num(x, 3))) |>
+  kable(col.names = c("Variable", "Per (min)", "SD (min)", "RR", "2.5%",
+                      "97.5%", "Rules out effects above", "P(direction)"),
+        caption = "Tracer coefficient re-expressed per 10 minutes of additional travel time to a thrombectomy hub.")
+```
+
+```{r mde-prose, results="asis"}
+cat(sprintf(
+  paste0("\n> Each additional 10 minutes to a thrombectomy hub is associated ",
+         "with a relative risk of %s (95%% CrI %s to %s) for cerebrovascular ",
+         "mortality. The data rule out effects larger than about %s per 10 ",
+         "minutes in either direction. Whether that is a useful null depends ",
+         "entirely on §4: if the whole territory sits within %s minutes of a ",
+         "hub, this interval is uninformative about the question the ",
+         "centralisation policy actually poses.\n\n"),
+  fmt_num(mde$rr, 3), fmt_num(mde$ci_low, 3), fmt_num(mde$ci_high, 3),
+  fmt_pct(100 * (mde$rules_out_above - 1)),
+  fmt_num(max(smr_geo_full$t_hub_mean, na.rm = TRUE), 0)
+))
+```
+
+## 5.6 Convergence
+
+```{r control-diag}
+control_diagnostics |>
+  mutate(across(c(rhat_max, rho), \(x) fmt_num(x, 3)),
+         pct_divergent = fmt_pct(pct_divergent)) |>
+  select(model, rhat_max, ess_min, n_divergent, pct_divergent, rho) |>
+  kable(col.names = c("Model", "Max R-hat", "Min ESS", "Divergent",
+                      "% divergent", "rho"),
+        caption = "A low minimum ESS concentrated on the exposure coefficient indicates weak identification rather than a sampler problem.")
+```
+
+# 6. Road B — all-age outcomes
+
+The 75-year ceiling belongs to the OECD/Eurostat avoidability definition, not
+to the clinical question. **An ischaemic stroke at 90 is as treatable as one at
+60**, and excluding those events discards most of what the exposure could act
+on. These outcomes go back to the register directly, standardised over the full
+age range against the same population denominator.
+
+## 6.1 Is there enough to model?
+
+::: {.callout-important}
+Read the verdict column before anything below it. A BYM2 fitted to a surface
+that is zero across most units returns the prior, not the data — and it returns
+it as a smooth, plausible-looking map.
+:::
+
+```{r feasibility}
+outcome_feasibility_table |>
+  mutate(
+    outcome = recode(outcome,
+                     i63    = "I63 cerebral infarction, all ages",
+                     cvdall = "I60-I69 all cerebrovascular, all ages",
+                     haem   = "I60-I62 haemorrhagic, under 75"),
+    across(c(mean_per_area, median_per_area, median_expected), \(x) fmt_num(x, 1)),
+    across(c(pct_zero, pct_expected_under5), \(x) fmt_pct(x))
+  ) |>
+  select(outcome, deaths, mean_per_area, median_per_area, max_per_area,
+         n_zero, pct_zero, median_expected, verdict) |>
+  kable(col.names = c("Outcome", "Deaths", "Mean/area", "Median/area",
+                      "Max/area", "Areas with 0", "% zero", "Median expected",
+                      "Verdict"),
+        caption = "Feasibility of each candidate outcome at 279-area resolution. Compare against the 0-74 avoidable cerebrovascular outcome, which has 851 deaths.")
+```
+
+## 6.2 Models, if feasible
+
+```{r allage-table}
+allage_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Outcome ~ exposure", "Term", "RR per SD", "2.5%",
+                      "97.5%", "ESS", "R-hat"),
+        caption = "All-age outcomes. Read alongside the feasibility verdict above: a tight interval on an unmodellable outcome is the prior speaking.")
+```
+
+```{r allage-diag}
+allage_diagnostics |>
+  mutate(across(c(rhat_max, rho), \(x) fmt_num(x, 3)),
+         pct_divergent = fmt_pct(pct_divergent)) |>
+  select(model, rhat_max, ess_min, n_divergent, pct_divergent, rho) |>
+  kable(col.names = c("Model", "Max R-hat", "Min ESS", "Divergent",
+                      "% divergent", "rho"),
+        caption = "Convergence for the all-age models.")
+```
+
+## 6.3 Where all-age ischaemic stroke deaths are
+
+```{r fig-i63-map, fig.cap="I63 (cerebral infarction) SMR, all ages, with thrombectomy hubs overlaid."}
+gi <- sf::st_as_sf(smr_geo_allage)
+ggplot(gi) +
+  geom_sf(aes(fill = i63_smr), colour = NA) +
+  geom_sf(data = sf::st_transform(
+            sf::st_as_sf(stroke_centres)[stroke_centres$is_hub, ], sf::st_crs(gi)),
+          shape = 24, fill = "#d94801", colour = "grey10", size = 2.2) +
+  scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#8c2d04",
+                       midpoint = 1, na.value = "grey88", name = "SMR") +
+  theme_atlas(map = TRUE)
+```
+
+```{r fig-i63-raw, fig.cap="All-age I63 SMR against travel time to the nearest hub."}
+d <- sf::st_drop_geometry(smr_geo_allage)
+ggplot(d, aes(x = t_hub_mean, y = i63_smr)) +
+  geom_hline(yintercept = 1, linetype = "22", colour = "grey45") +
+  geom_point(aes(size = i63_exp), alpha = 0.5, colour = "#8c2d04") +
+  geom_smooth(method = "loess", formula = y ~ x, se = TRUE,
+              colour = "grey25", linewidth = 0.6) +
+  scale_size_area(name = "Expected deaths", max_size = 5) +
+  labs(x = "Population-weighted travel time to hub (minutes)",
+       y = "I63 SMR, all ages",
+       subtitle = sprintf("Spearman = %.3f",
+                          cor(d$t_hub_mean, d$i63_smr, method = "spearman",
+                              use = "complete.obs"))) +
+  theme_atlas()
+```
+
+# 7. Interpretation
+
+::: {.callout-warning}
+## Read the null carefully
+
+A null tracer coefficient is consistent with at least four different states of
+the world, and this design cannot fully separate them. State which one you
+believe, and why, rather than reporting "no association".
+
+1. **No effect.** Access to thrombectomy does not affect population-level
+   cerebrovascular mortality in this territory.
+2. **No contrast.** There is an effect, but every area is close enough that the
+   study contains no exposure gradient to detect it with. §4 answers this
+   directly.
+3. **Wrong outcome.** Mortality is incidence times case fatality. Access can
+   only move case fatality, and only for the thrombectomy-eligible subset —
+   ischaemic strokes, presenting in window, large-vessel occlusion. Deaths from
+   haemorrhagic stroke, deaths before contact with services, and long-run
+   sequelae all sit in the numerator and dilute the signal toward zero.
+4. **Not identified.** The exposure and the spatial random effect describe the
+   same smooth variation. §5.2 addresses this.
+:::
+
+```{r nco-reading, results="asis"}
+tr  <- control_table[control_table$role == "Tracer", ]
+nco <- control_table[control_table$role == "Negative control outcome", ]
+
+if (nrow(tr) && nrow(nco)) {
+  cat(sprintf(
+    paste0("\n**The negative control.** Travel time is associated with ",
+           "all-cancer mortality at RR %s (%s to %s), against %s (%s to %s) ",
+           "for the tracer. %s\n\n"),
+    fmt_num(nco$estimate, 3), fmt_num(nco$ci_low, 3), fmt_num(nco$ci_high, 3),
+    fmt_num(tr$estimate, 3), fmt_num(tr$ci_low, 3), fmt_num(tr$ci_high, 3),
+    if (abs(log(nco$estimate)) > abs(log(tr$estimate)))
+      paste0("The negative control association is **larger** than the tracer ",
+             "association. Whatever travel time is measuring here, it is not ",
+             "specific to time-critical care: it tracks something about area ",
+             "character that also predicts cancer mortality. The tracer null ",
+             "cannot be read as evidence about the stroke pathway until this ",
+             "is explained.")
+    else
+      paste0("The negative control is smaller than the tracer association, ",
+             "which is the pattern the design was built to detect.")
+  ))
+}
+```
+
+::: {.callout-note}
+## Still open
+
+The **negative control exposure** has not been chosen, so the panel has three
+of its four slots filled. Without it, residual confounding by area type cannot
+be assessed from the exposure side.
+:::
+
+# Appendix. Section-level routing
+
+```{r section-summary}
+stroke_times |>
+  summarise(
+    sections        = n(),
+    population      = sum(pop, na.rm = TRUE),
+    unreached       = sum(is.na(t_centre_min)),
+    median_centre   = median(t_centre_min, na.rm = TRUE),
+    median_hub      = median(t_hub_min, na.rm = TRUE),
+    max_hub         = max(t_hub_min, na.rm = TRUE)
+  ) |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 1))) |>
+  kable(col.names = c("Census sections", "Population", "Unreached",
+                      "Median to centre", "Median to hub", "Max to hub"),
+        caption = "Routing at its native resolution, before aggregation to areal units.")
+```
+
+```{r dominant-hub}
+stroke_area |>
+  count(dominant_hub, name = "areas") |>
+  arrange(desc(areas)) |>
+  kable(col.names = c("Dominant hub", "Areal units"),
+        caption = "Which hub serves most of each area's population. A hub serving implausibly many or few units is worth checking against its coordinate in Table 1.")
+```
+
+```{r centroid-bias}
+diag_stroke$centroid_bias |>
+  head(15) |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 1))) |>
+  kable(caption = "Areas where routing from a centroid would have differed most from the population-weighted section mean.")
+```

@@ -149,15 +149,48 @@ build_section_area_xwalk <- function(sez_shp, area_shp, sez_key = NULL) {
 #' @noRd
 .deprivation_indicators <- function(
     x,
+    vintage = c("2023", "2011"),
     bounds = list(
       edu_low = c(0, 1),      # proportions by construction
       nonemp  = c(0, 1),
       foreign = c(0, 1),
       crowd   = c(1, 8)       # occupants per occupied dwelling
     )) {
-  band_cols <- paste0("P", 17:26)
-  require_cols(x, c("P1", "P83", "P86", "P87", "P88", "P101", "ST1", "A2",
-                    band_cols), "census counts")
+
+  vintage <- match.arg(vintage)
+
+  # ONE function computes both census vintages, deliberately. The 2011-vs-2023
+  # comparison is a test of whether the TERRITORY changed; if the two years
+  # went through two different implementations, any difference would confound
+  # that with the two implementations disagreeing, and the comparison would be
+  # worthless. Only the variable codes differ below - the arithmetic, the
+  # denominator guards, the clamping and the standardisation are shared.
+  #
+  # Variable mapping, permanent census 2023 -> general census 2011:
+  #
+  #   edu_low  P86+P87+P88 / P83     ->  P49+P50+P51+P52 / P46
+  #            (lower secondary or less; the 2023 numerator gives a median of
+  #            0.44, which matches "at most licenza media" rather than "at most
+  #            elementary", so the 2011 numerator includes P49)
+  #   nonemp   (P17:P26 - P101)      ->  (P17:P26 - P61)
+  #            (the 15-64 age bands carry the SAME codes P17-P26 in both
+  #            releases. P61 is employed aged 15+, so a small number of working
+  #            over-65s sit in the numerator; this understates non-employment
+  #            by roughly a percentage point and is documented rather than
+  #            silently corrected)
+  #   foreign  ST1 / P1              ->  ST1 / P1        (identical)
+  #   crowd    P1 / A2               ->  P1 / A2         (identical)
+
+  band_cols <- paste0("P", 17:26)   # 15-19 ... 60-64, same codes both vintages
+
+  spec <- if (vintage == "2023") {
+    list(edu_num = c("P86", "P87", "P88"), edu_den = "P83", emp = "P101")
+  } else {
+    list(edu_num = c("P49", "P50", "P51", "P52"), edu_den = "P46", emp = "P61")
+  }
+
+  require_cols(x, c("P1", spec$edu_den, spec$edu_num, spec$emp, "ST1", "A2",
+                    band_cols), paste("census counts,", vintage))
 
   pop_1564 <- rowSums(dplyr::select(x, dplyr::all_of(band_cols)), na.rm = TRUE)
 
@@ -166,14 +199,16 @@ build_section_area_xwalk <- function(sez_shp, area_shp, sez_key = NULL) {
   # the mean and SD of the whole national distribution.
   safe <- function(num, den) dplyr::if_else(den > 0, num / den, NA_real_)
 
+  edu_num <- rowSums(dplyr::select(x, dplyr::all_of(spec$edu_num)),
+                     na.rm = TRUE)
+
   out <- dplyr::mutate(
     x,
     pop     = .data[["P1"]],
-    edu_low = safe(.data[["P86"]] + .data[["P87"]] + .data[["P88"]],
-                   .data[["P83"]]),                       # low education, 9+
-    nonemp  = safe(pop_1564 - .data[["P101"]], pop_1564), # non-employment 15-64
-    foreign = safe(.data[["ST1"]], .data[["P1"]]),        # foreign residents
-    crowd   = safe(.data[["P1"]], .data[["A2"]])          # occupants / dwelling
+    edu_low = safe(edu_num, .data[[spec$edu_den]]),
+    nonemp  = safe(pop_1564 - .data[[spec$emp]], pop_1564),
+    foreign = safe(.data[["ST1"]], .data[["P1"]]),
+    crowd   = safe(.data[["P1"]], .data[["A2"]])
   )
 
   # A POSITIVE denominator is not the same as a PLAUSIBLE one, and the
@@ -242,6 +277,12 @@ build_section_area_xwalk <- function(sez_shp, area_shp, sez_key = NULL) {
 #'   section identifier and `PROCOM`.
 #' @param xwalk Section-to-area crosswalk from [build_section_area_xwalk()].
 #' @param sez_key Section identifier column in `census`. Detected when `NULL`.
+#' @param vintage Census release the variable codes belong to: `"2023"` (the
+#'   permanent census) or `"2011"` (the general census). The indicators, the
+#'   guards, the clamping and the two-stage standardisation are identical
+#'   across vintages; only the source variable codes differ. Running both years
+#'   through one function is what makes a temporal comparison a statement about
+#'   the territory rather than about two implementations.
 #'
 #' @return A tibble, one row per modelling area: `area`, `population`, the four
 #'   raw indicators, `di_score` (sum of nationally standardised indicators) and
@@ -259,7 +300,10 @@ build_section_area_xwalk <- function(sez_shp, area_shp, sez_key = NULL) {
 #' @importFrom dplyr across all_of group_by left_join mutate select summarise
 #' @importFrom rlang .data
 #' @export
-build_deprivation <- function(census, xwalk, sez_key = NULL) {
+build_deprivation <- function(census, xwalk, sez_key = NULL,
+                              vintage = c("2023", "2011")) {
+
+  vintage <- match.arg(vintage)
 
   if (is.null(sez_key)) {
     sez_key <- detect_section_key(census, what = "census")
@@ -275,7 +319,7 @@ build_deprivation <- function(census, xwalk, sez_key = NULL) {
     dplyr::summarise(dplyr::across(dplyr::all_of(count_cols),
                                    ~ sum(.x, na.rm = TRUE)),
                      .groups = "drop") |>
-    .deprivation_indicators()
+    .deprivation_indicators(vintage = vintage)
 
   ind_names <- c("edu_low", "nonemp", "foreign", "crowd")
   ref <- lapply(ind_names, function(v) {
@@ -314,7 +358,7 @@ build_deprivation <- function(census, xwalk, sez_key = NULL) {
     dplyr::summarise(dplyr::across(dplyr::all_of(count_cols),
                                    ~ sum(.x, na.rm = TRUE)),
                      .groups = "drop") |>
-    .deprivation_indicators()
+    .deprivation_indicators(vintage = vintage)
 
   if (!nrow(area_counts)) {
     stop("No census section matched the crosswalk. The section identifier in ",
@@ -349,6 +393,7 @@ build_deprivation <- function(census, xwalk, sez_key = NULL) {
 
   attr(out, "national_reference") <- ref
   attr(out, "national_quintile_cuts") <- cuts
+  attr(out, "vintage") <- vintage
   out
 }
 

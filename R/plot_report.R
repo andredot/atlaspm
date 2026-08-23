@@ -314,3 +314,128 @@ save_figure <- function(plot, name, dir = "output/figures",
                   units = "mm", dpi = dpi, bg = "white")
   invisible(path)
 }
+
+
+#' NO2 and PM2.5 side by side
+#'
+#' The figure behind the pollutant selection argument. Both surfaces are in the
+#' same units, so two presentations are possible and they answer different
+#' questions.
+#'
+#' \strong{Free scales} (the default) show each pollutant's own spatial pattern:
+#' where in the territory each is high. Use this to see whether the two
+#' pollutants pick out the same places.
+#'
+#' \strong{Shared scale} puts both on one common ug/m3 legend. This is the
+#' honest version of the selection argument, because it shows directly what the
+#' methods claim - that PM2.5 varies far less across the study area than NO2
+#' does, and therefore carries less contrast for a model to use. On free scales
+#' that difference is invisible, since each panel is stretched to fill its own
+#' range.
+#'
+#' @param geo Modelling `sf` carrying the pollutant columns. Column names are
+#'   detected with [exposure_columns()], so the exposure year does not need to
+#'   be hardcoded.
+#' @param shared_scale Put both panels on one legend. Default `FALSE`.
+#' @param caption Passed to `labs()`; a default noting the source is used when
+#'   `NULL`.
+#' @param cor_note Append the rank correlation between the two surfaces to the
+#'   caption. Default `TRUE`.
+#'
+#' @return A patchwork object when `shared_scale = FALSE` and \pkg{patchwork} is
+#'   available, otherwise a single faceted ggplot.
+#' @examples
+#' \dontrun{
+#' plot_pollution_pair(smr_geo_full)
+#' plot_pollution_pair(smr_geo_full, shared_scale = TRUE)
+#' }
+#' @seealso [exposure_columns()], [plot_travel_time()]
+#' @export
+plot_pollution_pair <- function(geo,
+                                shared_scale = FALSE,
+                                caption      = NULL,
+                                cor_note     = TRUE) {
+
+  g   <- sf::st_as_sf(geo)
+  tab <- sf::st_drop_geometry(g)
+  cols <- exposure_columns(tab)
+
+  if (length(cols) < 2L) {
+    stop("Need both a NO2 and a PM2.5 column. Found: ",
+         if (length(cols)) paste(cols, collapse = ", ") else "none",
+         ". Was add_pollution() run?", call. = FALSE)
+  }
+
+  labs_pretty <- c("NO2 (ug/m3)" = "NO\u2082", "PM2.5 (ug/m3)" = "PM\u2082.\u2085")
+  nm <- ifelse(names(cols) %in% names(labs_pretty),
+               labs_pretty[names(cols)], names(cols))
+
+  if (is.null(caption)) {
+    caption <- paste0(
+      "Annual mean, ", sub(".*_", "", cols[1]),
+      ". EEA interpolated concentration maps at 1 km, area-weighted to the ",
+      "modelling units."
+    )
+  }
+  if (cor_note) {
+    rho <- stats::cor(tab[[cols[1]]], tab[[cols[2]]], method = "spearman",
+                      use = "complete.obs")
+    caption <- paste0(caption, "\nSpearman rank correlation between the two ",
+                      "surfaces: ", sprintf("%.3f", rho), ".")
+  }
+
+  # ---- one shared legend: the selection argument, made visible -------------
+  if (shared_scale) {
+    long <- do.call(rbind, lapply(seq_along(cols), function(i) {
+      d <- g[, cols[i], drop = FALSE]
+      names(d)[1] <- "value"
+      d[["pollutant"]] <- factor(nm[i], levels = nm)
+      d
+    }))
+
+    return(
+      ggplot2::ggplot(long) +
+        ggplot2::geom_sf(ggplot2::aes(fill = .data[["value"]]), colour = NA) +
+        ggplot2::facet_wrap(~ .data[["pollutant"]], nrow = 1) +
+        ggplot2::scale_fill_viridis_c(
+          option = "inferno", direction = -1,
+          name = expression(paste(mu, "g/m"^3))
+        ) +
+        ggplot2::labs(caption = caption) +
+        theme_atlas(map = TRUE) +
+        ggplot2::theme(legend.position = "right")
+    )
+  }
+
+  # ---- free scales: each pollutant's own pattern ---------------------------
+  panel <- function(col, title) {
+    ggplot2::ggplot(g) +
+      ggplot2::geom_sf(ggplot2::aes(fill = .data[[col]]), colour = NA) +
+      ggplot2::scale_fill_viridis_c(
+        option = "inferno", direction = -1,
+        name = expression(paste(mu, "g/m"^3))
+      ) +
+      ggplot2::labs(title = title) +
+      theme_atlas(map = TRUE) +
+      ggplot2::theme(
+        legend.position = "bottom",
+        legend.key.width = ggplot2::unit(14, "mm"),
+        legend.key.height = ggplot2::unit(3, "mm"),
+        plot.title = ggplot2::element_text(face = "bold", hjust = 0.5)
+      )
+  }
+
+  p1 <- panel(unname(cols[1]), nm[1])
+  p2 <- panel(unname(cols[2]), nm[2])
+
+  if (!requireNamespace("patchwork", quietly = TRUE)) {
+    message("patchwork is not installed; falling back to a shared scale. ",
+            "Install patchwork for independent legends per panel.")
+    return(plot_pollution_pair(geo, shared_scale = TRUE, caption = caption,
+                               cor_note = FALSE))
+  }
+
+  patchwork::wrap_plots(p1, p2, nrow = 1) +
+    patchwork::plot_annotation(caption = caption,
+                               theme = theme_atlas())
+}
