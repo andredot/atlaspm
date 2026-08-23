@@ -2,6 +2,14 @@
 .Rhistory
 .RData
 .Ruserdata
-inst/extdata
 .Renviron
+inst/extdata
 pat.txt
+
+_targets.yaml
+
+_targets/
+
+*.html
+
+*.png

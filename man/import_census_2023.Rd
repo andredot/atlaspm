@@ -9,7 +9,8 @@ import_census_2023(
   pattern = "_2023_sezioni\\\\.xlsx$",
   sheet = 1,
   cols = c("PROCOM", "P1", "P83", "P86", "P87", "P88", "P101", paste0("P", 17:26), "ST1",
-    "A2")
+    "A2"),
+  sez_key = NULL
 )
 }
 \arguments{
@@ -24,16 +25,20 @@ import_census_2023(
 counts required to build the proxy: total and 9+ population, low-education
 counts, employed 15-64, the ten 15-64 age bands, foreign residents, and
 occupied dwellings.}
+
+\item{sez_key}{Name of the census-section identifier column. Detected from
+the first file when \code{NULL}; see \code{\link{detect_section_key}}.}
 }
 \value{
-A tibble, one row per census section: \code{PROCOM} (character,
-6-digit) and the selected count columns as numeric.
+A tibble, one row per census section: the section identifier,
+\code{PROCOM} (character, 6-digit) and the selected count columns as
+numeric.
 }
 \description{
 Reads the per-region ISTAT 2023 permanent-census section workbooks
 (\code{R01_..._2023_sezioni.xlsx} ... \code{R20_..._2023_sezioni.xlsx}) from a
 directory and row-binds them into a single national section-level table. Only
-the columns needed by \code{\link{build_deprivation_proxy}} are kept, so the
+the columns needed by \code{\link{build_deprivation}} are kept, so the
 result stays small even though the inputs span ~350,000 census sections.
 }
 \details{
@@ -41,6 +46,6 @@ The record layout (TRACCIATO) is shared across regions, so one column
 selection applies to every file. The TRACCIATO workbook and any other
 non-"_sezioni" file in the directory are skipped by the default \code{pattern}.
 The municipality national code \code{PROCOM} is read as character and
-zero-padded to 6 digits via \code{\link{pad}}, matching the key convention
+zero-padded to 6 digits, matching the key convention
 used elsewhere in the package.
 }

@@ -7,24 +7,24 @@
 plot_scatter_smr_index(
   smr,
   index,
-  group_var = "comune",
+  group_var = "area",
   isr = "total_isr",
   index_col = "ivsm",
   ref_line = NULL,
   xlab = "Vulnerability / deprivation index",
   smooth = TRUE,
-  title = "Standardised mortality vs index, by comune",
-  subtitle = "Each point a comune; x = index, y = indirectly standardised rate"
+  title = "Standardised mortality vs index, by area",
+  subtitle = "Each point a area; x = index, y = indirectly standardised rate"
 )
 }
 \arguments{
 \item{smr}{Standardised table from \code{preprocess_smr()} (one row per
-comune), supplying the standardised rate.}
+area), supplying the standardised rate.}
 
-\item{index}{Index table (one row per comune) from \code{import_ivsm()} or
-\code{build_deprivation_proxy()}.}
+\item{index}{Index table (one row per area) from \code{import_ivsm()} or
+\code{build_deprivation()}.}
 
-\item{group_var}{Comune key present in both. Default \code{"comune"}.}
+\item{group_var}{area key present in both. Default \code{"area"}.}
 
 \item{isr}{Column in \code{smr} holding the overall standardised rate.
 Default \code{"total_isr"}.}
@@ -45,14 +45,14 @@ Default \code{"total_isr"}.}
 A \code{ggplot} object.
 }
 \description{
-One point per comune: a contextual index (IVSM, Deprivation Index, ...) on
+One point per area: a contextual index (IVSM, Deprivation Index, ...) on
 the x-axis and the overall indirectly standardised mortality rate (ISR,
 \emph{not} the SMR ratio) on the y-axis. A positive slope indicates that more
 deprived/vulnerable comuni also carry higher standardised mortality. The ISR
 comes from \code{\link{preprocess_smr}} (the \code{total_isr} column by
 default); the index comes from \code{\link{import_ivsm}} or
-\code{\link{build_deprivation_proxy}}. The two are joined on the shared
-\code{comune} key.
+\code{\link{build_deprivation}}. The two are joined on the shared
+\code{area} key.
 }
 \details{
 The function is index-agnostic: point the \code{index_col} argument at the

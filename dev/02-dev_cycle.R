@@ -3,22 +3,29 @@
 meta_pkgs <- c("tidyverse")  # e.g., tidyverse, tidymodels, ...
 renv::install(meta_pkgs)
 
-prj_pkgs <- c("fs", "readr", "stringr", "purrr",
-              "sf","spdep","geostan", "crew",
-              "quarto", "gtsummary", "janitor", "plotly")
+prj_pkgs <- c(
+  # data manipulation
+  "dplyr", "tidyr", "purrr", "tibble", "readr", "readxl",
+  "stringr", "forcats", "janitor", "lubridate", "fs", "rlang", "withr",
+  # spatial
+  "sf", "spdep", "terra", "exactextractr", "Matrix",
+  # routing (stroke sub-model)
+  "dodgr", "osmextract", "tidygeocoder", "stringdist",
+  # NAR primary-care pipeline
+  # "arrow", "duckdb", "DBI",
+  # estimation
+  "geostan", "rstan", "loo",
+  # output
+  "ggplot2", "gtsummary", "knitr",
+  # pipeline
+  "targets", "tarchetypes", "crew", "quarto", "here", "cli", "methods"
+)
 renv::install(prj_pkgs)
 purrr::walk(prj_pkgs, usethis::use_package)
 
-gh_prj_pkgs <- c()  # e.g. CorradoLanera/autotestthat
-renv::install(gh_prj_pkgs)
-purrr::walk(gh_prj_pkgs, ~{
-  package_name <- stringr::str_extract(.x, "[\\w\\.]+$")
-  usethis::use_dev_package(package_name, remote = .x)
-})
-
 dev_pkgs <- c(
   "checkmate", "covr", "devtools", "distill", "fs", "here", "htmltools",
-  "knitr", "lintr", "lubridate", "purrr", "qs2", "rstudioapi",
+  "knitr", "lintr", "lubridate", "purrr", "rstudioapi",
   "spelling", "stringr", "targets", "tarchetypes", "testthat",
   "usethis", "withr"
 )

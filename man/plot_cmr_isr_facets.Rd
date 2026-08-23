@@ -7,17 +7,17 @@
 plot_cmr_isr_facets(
   cmr,
   smr,
-  group_var = "comune",
+  group_var = "area",
   prefix = "M_",
   ncol = 4,
-  title = "Crude vs standardised preventable mortality by mechanism",
-  subtitle = "Each point a comune; colour = SMR. Free scales per panel."
+  title = "Crude vs standardised avoidable mortality by mechanism",
+  subtitle = "Each point a area; colour = SMR. Free scales per panel."
 )
 }
 \arguments{
-\item{cmr, smr}{Crude and standardised tables (one row per comune).}
+\item{cmr, smr}{Crude and standardised tables (one row per area).}
 
-\item{group_var}{Comune key present in both. Default \code{"comune"}.}
+\item{group_var}{area key present in both. Default \code{"area"}.}
 
 \item{prefix}{Column prefix selecting the category block. Default \code{"M_"}.}
 

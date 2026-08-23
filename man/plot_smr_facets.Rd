@@ -11,15 +11,15 @@ plot_smr_facets(
   strip_prefix = "^[A-Z]_",
   strip_suffix = "_smr$",
   ncol = 4,
-  title = "Standardised preventable mortality by mechanism, by comune",
-  subtitle =
-    "Indirectly age-sex standardised mortality ratio (SMR); 1 = deaths match the age-sex expectation",
+  title = "Standardised avoidable mortality by mechanism, by area",
+  subtitle = paste("Indirectly age-sex standardised mortality ratio (SMR);",
+    "1 = deaths match the age-sex expectation"),
   caption =
     "Each panel standardised on the same age-sex schedule; bins shared across panels."
 )
 }
 \arguments{
-\item{smr}{An \code{sf} object with one row per comune and several SMR
+\item{smr}{An \code{sf} object with one row per area and several SMR
 columns, e.g. \code{add_geo(preprocess_smr(...), comuni)}.}
 
 \item{cols}{A \code{tidyselect} expression choosing the SMR columns to map.
@@ -47,7 +47,7 @@ Draws a small-multiples choropleth of the standardised mortality ratio across
 several categories at once - by default the seven mechanism columns
 (\code{M_*_smr}) produced by \code{preprocess_smr()} and passed through
 \code{add_geo()}. Each facet is one category; all share the same SMR bins
-(anchored on 1.0), the same earthy diverging palette, no comune borders and a
+(anchored on 1.0), the same earthy diverging palette, no area borders and a
 single shared legend, so the panels are directly comparable.
 }
 \details{

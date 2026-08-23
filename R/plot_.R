@@ -1,4 +1,4 @@
-#' Map indirectly standardised preventable mortality by area
+#' Map indirectly standardised avoidable mortality by area
 #'
 #' Draws a choropleth of the all-cause standardised mortality ratio
 #' (\code{total_smr}) from a geometry-attached \code{smr} table (the output of
@@ -35,8 +35,8 @@
 plot_smr_map <- function(smr,
                          value    = "total_smr",
                          breaks   = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
-                         title    = "Preventable mortality by area",
-                         subtitle = "Indirectly standardised mortality ratio (SMR) for preventable causes",
+                         title    = "Avoidable mortality by area",
+                         subtitle = "Indirectly standardised mortality ratio (SMR), all avoidable causes",
                          caption  = "SMR = 1 means deaths match the area-wide age-sex expectation.") {
 
   labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
@@ -134,8 +134,9 @@ plot_smr_facets <- function(smr,
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
                             ncol         = 4,
-                            title    = "Standardised preventable mortality by mechanism, by area",
-                            subtitle = "Indirectly age-sex standardised mortality ratio (SMR); 1 = deaths match the age-sex expectation",
+                            title    = "Standardised avoidable mortality by mechanism, by area",
+                            subtitle = paste("Indirectly age-sex standardised mortality ratio (SMR);",
+                                             "1 = deaths match the age-sex expectation"),
                             caption  = "Each panel standardised on the same age-sex schedule; bins shared across panels.") {
 
   labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
@@ -222,7 +223,7 @@ plot_cmr_isr <- function(cmr, smr,
                          crude     = "total",
                          isr       = "total_isr",
                          smr_col   = "total_smr",
-                         title     = "Crude vs standardised preventable mortality, by area",
+                         title     = "Crude vs standardised avoidable mortality, by area",
                          subtitle  = "Each point a area; colour = SMR (observed / expected)") {
 
   d <- dplyr::inner_join(
@@ -280,7 +281,7 @@ plot_cmr_isr_facets <- function(cmr, smr,
                                 group_var = "area",
                                 prefix    = "M_",
                                 ncol      = 4,
-                                title     = "Crude vs standardised preventable mortality by mechanism",
+                                title     = "Crude vs standardised avoidable mortality by mechanism",
                                 subtitle  = "Each point a area; colour = SMR. Free scales per panel.") {
 
   crude_long <- cmr |>
@@ -334,7 +335,7 @@ plot_cmr_isr_facets <- function(cmr, smr,
 #' deprived/vulnerable comuni also carry higher standardised mortality. The ISR
 #' comes from \code{\link{preprocess_smr}} (the \code{total_isr} column by
 #' default); the index comes from \code{\link{import_ivsm}} or
-#' \code{\link{build_deprivation_proxy}}. The two are joined on the shared
+#' \code{\link{build_deprivation}}. The two are joined on the shared
 #' \code{area} key.
 #'
 #' The function is index-agnostic: point the \code{index_col} argument at the
@@ -345,7 +346,7 @@ plot_cmr_isr_facets <- function(cmr, smr,
 #' @param smr Standardised table from \code{preprocess_smr()} (one row per
 #'   area), supplying the standardised rate.
 #' @param index Index table (one row per area) from \code{import_ivsm()} or
-#'   \code{build_deprivation_proxy()}.
+#'   \code{build_deprivation()}.
 #' @param group_var area key present in both. Default \code{"area"}.
 #' @param isr Column in \code{smr} holding the overall standardised rate.
 #'   Default \code{"total_isr"}.
@@ -459,7 +460,7 @@ plot_exceedance_map <- function(geo,
     threshold_label <- sprintf("+%d%% (RR > %.2f)", pct, threshold)
   }
   if (is.null(subtitle)) {
-    subtitle <- paste0("Probability that preventable mortality exceeds ", threshold_label)
+    subtitle <- paste0("Probability that avoidable mortality exceeds ", threshold_label)
   }
 
   # labels defined ONCE, worst-to-best; palette derives from them so the two
@@ -579,7 +580,7 @@ plot_exceedance_facets <- function(geo,
     threshold_label <- sprintf("+%d%% (RR > %.2f)", pct, threshold)
   }
   if (is.null(subtitle)) {
-    subtitle <- paste0("Probability that preventable mortality exceeds ", threshold_label)
+    subtitle <- paste0("Probability that avoidable mortality exceeds ", threshold_label)
   }
 
   # tiers defined ONCE, worst-to-best; palette derives from them

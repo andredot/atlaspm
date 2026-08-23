@@ -19,6 +19,13 @@
 #' By default it is a left join from the table, keeping every row of \code{data}
 #' (set \code{keep = "geometry"} to instead keep every area in the shapefile).
 #'
+#' When \code{data_key} and \code{shp_key} name the same column (as in the
+#' NIL-aware call, where both are \code{"area"}), the shapefile's copy of the
+#' key is dropped before the join. Without this dplyr would disambiguate the
+#' two into \code{area.x} and \code{area.y}, leaving no column called
+#' \code{area} - and it would do so without error, so the failure would only
+#' appear in a downstream target that selects on the key.
+#'
 #' @param data An area-level data frame (e.g. output of \code{preprocess_cmr()}
 #'   or \code{preprocess_smr()}, or the population table).
 #' @param shp The area geometries as an already-read \code{sf} object. For the
@@ -60,7 +67,7 @@
 #' }
 #'
 #' @seealso \code{\link{preprocess_cmr}}, \code{\link{preprocess_smr}}
-#' @importFrom dplyr mutate left_join right_join select all_of |>
+#' @importFrom dplyr mutate left_join right_join select all_of coalesce |>
 #' @importFrom sf st_as_sf
 #' @importFrom rlang .data
 #' @export
@@ -87,6 +94,15 @@ add_geo <- function(data,
   # normalise both keys to a common string under one shared name
   data <- dplyr::mutate(data, .key = pad(.data[[data_key]]))
   shp  <- dplyr::mutate(shp,  .key = pad(.data[[shp_key]]))
+  # When both sides name their key column identically (the NIL-aware call, where
+  # data_key = shp_key = "area"), dplyr disambiguates the join output to
+  # `area.x` / `area.y` and no plain `area` survives - silently, since the join
+  # itself succeeds. The shapefile's copy is redundant once `.key` exists, so
+  # drop it and let the data's column come through under its own name.
+  key_collision <- identical(data_key, shp_key)
+  if (key_collision) {
+    shp <- dplyr::select(shp, -dplyr::all_of(shp_key))
+  }
   # Keep the sf (shp) on the LEFT of the join. dplyr only preserves the sf class
   # when the sf is the left table; joining a plain tibble on the left returns a
   # demoted tibble carrying a bare sfc, which later breaks dplyr::mutate() with
@@ -98,6 +114,16 @@ add_geo <- function(data,
     # keep every area in `shp`
     dplyr::left_join(shp, data, by = ".key")
   }
+  # With keep = "geometry" the unmatched shapefile rows have no data-side key,
+  # so refill them from `.key` rather than leaving the identifier NA on exactly
+  # the areas the map is meant to show as empty.
+  if (key_collision && keep == "geometry") {
+    joined[[data_key]] <- dplyr::coalesce(
+      as.character(joined[[data_key]]),
+      joined[[".key"]]
+    )
+  }
+
   joined |>
     dplyr::select(-".key") |>
     sf::st_as_sf()

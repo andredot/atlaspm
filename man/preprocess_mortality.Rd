@@ -2,7 +2,7 @@
 % Please edit documentation in R/preprocess_.R
 \name{preprocess_mortality}
 \alias{preprocess_mortality}
-\title{Preprocess a mortality file down to preventable causes of death}
+\title{Preprocess a mortality file down to avoidable causes of death}
 \usage{
 preprocess_mortality(
   mort_raw,
@@ -56,11 +56,21 @@ carve-outs such as \code{A40.3} (preventable) from the rest of \code{A40}
 (not preventable). Codes that match nothing, and missing/invalid codes
 (e.g. \code{NA}, \code{"ZZZZ"}), are dropped by the final filter.
 
-The eight causes that the OECD/Eurostat list splits 50/50 between the
-preventable and treatable categories (tuberculosis, cervical cancer,
-diabetes, and five cardiovascular causes) carry \code{weight = 0.5}; all
-other preventable causes carry \code{weight = 1}. To count deaths without
-double-counting against a treatable analysis, weight by this column.
+Nine causes in the lookup carry \code{weight = 0.5}, in two distinct
+situations. \strong{Seven} are split across the preventable and treatable
+lists: tuberculosis, cervical cancer, and five cardiovascular causes
+(hypertensive diseases, ischaemic heart diseases, cerebrovascular diseases,
+other atherosclerosis, aortic aneurysm). \strong{Two} more - colorectal
+cancer and female breast cancer - are wholly treatable but split across two
+mechanisms (screening and tertiary prevention). Diabetes is \emph{not}
+split: E11 is preventable at weight 1 and E10/E12-E14 are treatable at
+weight 1. All other causes carry \code{weight = 1}.
+
+Because the two arms of a split cause share a \code{cause} label and a
+\code{group}, summing \code{weight} within either of those classifications
+recovers whole deaths; it is only within \code{mechanism} that halves
+appear. To count deaths without double-counting, always weight by this
+column.
 }
 \examples{
 \dontrun{
