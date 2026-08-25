@@ -7,7 +7,7 @@
 plot_smr_facets(
   smr,
   cols = dplyr::matches("^M_.*_smr$"),
-  breaks = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+  breaks = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
   strip_prefix = "^[A-Z]_",
   strip_suffix = "_smr$",
   ncol = 4,

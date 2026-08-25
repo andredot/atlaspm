@@ -271,3 +271,186 @@ import_census_2023 <- function(dir,
     purrr::list_rbind()
 }
 
+
+# Primary care ----------------------------------------------------------------
+
+#' Import the area-level primary-care density indicator
+#'
+#' Reads the assistance indicator exported from the Nuova Anagrafe Regionale
+#' (one row per modelling area) and returns it in the shape the modelling frame
+#' expects. This replaces the seeded placeholder that stood in for it while the
+#' extract did not exist: `gp_density` is now measured, and every model that
+#' carries `gp_density_z` is estimated on data.
+#'
+#' @details
+#' The file is the area-level collapse of [compute_density_by_area()], computed
+#' upstream against the register rather than in this package:
+#' \describe{
+#'   \item{`numeratore`}{Summed GP supply, \eqn{\sum_i 1 / L_{g(i)}} over
+#'     resident person-time — the number of GP-equivalents serving the area
+#'     once each GP is shared out across their list. Fractional by
+#'     construction.}
+#'   \item{`denominatore`}{Resident person-time in the denominator.}
+#'   \item{`indicatore`}{Their ratio: GP-equivalents per resident.}
+#' }
+#'
+#' Two things are handled here rather than left to the caller.
+#'
+#' `area` is read as character. Read as a number it would lose the leading zero
+#' on every ISTAT code and turn each Milan NIL key (`"015146_79"`) into `NA`,
+#' collapsing the whole city into one row — a failure that produces a plausible
+#' looking table rather than an error.
+#'
+#' `indicatore` is around \eqn{7 \times 10^{-4}}, which prints as zeros in the
+#' covariate table and makes a per-SD coefficient hard to sanity-check against
+#' the literature. It is therefore rescaled to GP-equivalents per `per`
+#' residents (1,000 by default, the conventional unit for primary-care supply).
+#' The rescaling is a constant factor, so `gp_density_z` — and hence every
+#' model coefficient — is unchanged by it.
+#'
+#' @param file_path Path to the indicator CSV. Normally supplied by an upstream
+#'   `targets` file target resolving [get_input_data_path()].
+#' @param per Denominator for the reported density. Default `1000`.
+#' @param tol Relative tolerance when checking that `indicatore` equals
+#'   `numeratore / denominatore`. Default `1e-6`.
+#'
+#' @return A tibble, one row per area:
+#' \describe{
+#'   \item{area}{Modelling-area key, matching `area_shp$area`.}
+#'   \item{gp_density}{GP-equivalents per `per` residents. The covariate.}
+#'   \item{gp_caseload}{Residents per GP-equivalent — the reciprocal, which is
+#'     the form a service manager reads.}
+#'   \item{gp_supply, gp_population}{The numerator and denominator, retained so
+#'     the indicator can be re-aggregated or population-weighted.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' gp <- import_gp_density(get_input_data_path("indicatore_assistenza_2023.csv"))
+#' }
+#'
+#' @seealso [check_gp_density()], [compute_density_by_area()]
+#' @importFrom rlang .data
+#' @export
+import_gp_density <- function(file_path, per = 1000, tol = 1e-6) {
+
+  raw <- readr::read_csv(
+    file_path,
+    col_types = readr::cols(area = readr::col_character(),
+                            .default = readr::col_double())
+  )
+  require_cols(raw, c("area", "numeratore", "denominatore", "indicatore"),
+               "primary-care indicator file")
+
+  dup <- raw[["area"]][duplicated(raw[["area"]])]
+  if (length(dup)) {
+    stop("Duplicated `area` key(s) in the primary-care indicator: ",
+         paste(unique(dup), collapse = ", "),
+         ". One row per area is required, or add_covariate() would silently ",
+         "multiply the rows of the modelling frame.", call. = FALSE)
+  }
+
+  bad <- !is.finite(raw[["indicatore"]]) | raw[["indicatore"]] <= 0 |
+    !is.finite(raw[["denominatore"]]) | raw[["denominatore"]] <= 0
+  if (any(bad)) {
+    stop(sum(bad), " area(s) have a non-positive or missing indicator or ",
+         "denominator: ", paste(utils::head(raw[["area"]][bad], 10),
+                                collapse = ", "),
+         ". A zero denominator has no defined density and would propagate as ",
+         "Inf through the z-score.", call. = FALSE)
+  }
+
+  # The file carries the ratio as well as its two components. They should
+  # agree; if they do not, one of the three columns is from a different run.
+  recomputed <- raw[["numeratore"]] / raw[["denominatore"]]
+  drift <- max(abs(recomputed - raw[["indicatore"]]) / raw[["indicatore"]])
+  if (drift > tol) {
+    stop("`indicatore` does not equal `numeratore / denominatore` ",
+         "(max relative difference ", format(drift, digits = 3),
+         "). The three columns appear to come from different extracts.",
+         call. = FALSE)
+  }
+
+  tibble::tibble(
+    area          = raw[["area"]],
+    gp_density    = raw[["indicatore"]] * per,
+    gp_caseload   = 1 / raw[["indicatore"]],
+    gp_supply     = raw[["numeratore"]],
+    gp_population = raw[["denominatore"]]
+  )
+}
+
+
+#' Audit the primary-care indicator against the modelling geography
+#'
+#' The indicator and `area_shp` are built from different registers, so they
+#' need not cover the same areas, and a mismatch is invisible downstream:
+#' [add_covariate()] imputes an unmatched area from its neighbours' mean and
+#' only warns, so a systematic gap would enter the model as smoothed
+#' neighbouring values rather than as an error. This reports the overlap in
+#' both directions and quantifies how much population sits outside it.
+#'
+#' Two mismatches are expected against the current extract and are not faults:
+#' the indicator carries a bare `015146` row for Milan residents whose NIL did
+#' not resolve, and a row for NIL 8 (Parco Sempione), which the pipeline drops
+#' for having no resident population. Both are tiny; the point of the audit is
+#' that their size is reported rather than assumed.
+#'
+#' @param gp_density_area Output of [import_gp_density()].
+#' @param area_shp The modelling geography.
+#' @param max_unmatched_pct Warn when the share of modelled areas with no
+#'   indicator exceeds this. Default `1`.
+#'
+#' @return A one-row tibble: `n_areas`, `n_indicator`, `n_matched`,
+#'   `n_area_no_indicator`, `n_indicator_no_area`, `pop_unmatched`,
+#'   `pct_pop_unmatched`. The unmatched keys are attached as the
+#'   `"area_no_indicator"` and `"indicator_no_area"` attributes.
+#'
+#' @examples
+#' \dontrun{
+#' check_gp_density(gp_density_area, area_shp)
+#' }
+#'
+#' @seealso [import_gp_density()]
+#' @export
+check_gp_density <- function(gp_density_area, area_shp,
+                             max_unmatched_pct = 1) {
+
+  shp_keys  <- as.character(area_shp[["area"]])
+  data_keys <- as.character(gp_density_area[["area"]])
+
+  area_no_ind <- setdiff(shp_keys, data_keys)
+  ind_no_area <- setdiff(data_keys, shp_keys)
+
+  pop_out <- sum(
+    gp_density_area[["gp_population"]][data_keys %in% ind_no_area],
+    na.rm = TRUE
+  )
+
+  out <- tibble::tibble(
+    n_areas             = length(shp_keys),
+    n_indicator         = length(data_keys),
+    n_matched           = length(intersect(shp_keys, data_keys)),
+    n_area_no_indicator = length(area_no_ind),
+    n_indicator_no_area = length(ind_no_area),
+    pop_unmatched       = pop_out,
+    pct_pop_unmatched   = 100 * pop_out /
+      sum(gp_density_area[["gp_population"]], na.rm = TRUE)
+  )
+
+  attr(out, "area_no_indicator") <- area_no_ind
+  attr(out, "indicator_no_area") <- ind_no_area
+
+  pct_areas_missing <- 100 * out[["n_area_no_indicator"]] / out[["n_areas"]]
+  if (pct_areas_missing > max_unmatched_pct) {
+    warning(sprintf(
+      paste0("%d of %d modelled areas (%.1f%%) have no primary-care ",
+             "indicator and will be imputed from their neighbours by ",
+             "add_covariate(): %s"),
+      out[["n_area_no_indicator"]], out[["n_areas"]], pct_areas_missing,
+      paste(utils::head(area_no_ind, 10), collapse = ", ")),
+      call. = FALSE)
+  }
+
+  out
+}

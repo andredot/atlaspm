@@ -4,7 +4,12 @@
 \alias{collect_controls}
 \title{Assemble the control panel for reporting}
 \usage{
-collect_controls(fits, labels = NULL, probs = c(0.025, 0.975))
+collect_controls(
+  fits,
+  labels = NULL,
+  probs = c(0.025, 0.975),
+  tracer_outcome = "I63 cerebral infarction, all ages"
+)
 }
 \arguments{
 \item{fits}{Output of \code{\link[=fit_controls]{fit_controls()}}.}
@@ -12,6 +17,11 @@ collect_controls(fits, labels = NULL, probs = c(0.025, 0.975))
 \item{labels}{Optional display labels for the exposures.}
 
 \item{probs}{Credible-interval bounds.}
+
+\item{tracer_outcome}{Display name of the tracer outcome, which must match
+the \code{tracer_obs} / \code{tracer_exp} pair given to \code{\link[=fit_controls]{fit_controls()}}. Hardcoding
+it here once meant the table kept saying "cerebrovascular mortality" after
+the reference outcome changed.}
 }
 \value{
 A tibble: \code{role}, \code{outcome}, \code{exposure}, \code{rr}, \code{ci_low}, \code{ci_high},

@@ -60,6 +60,23 @@ sd_of <- function(tbl, variable, digits = 2) {
 median_of <- function(tbl, variable, digits = 2) {
   r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["median"]], digits)
 }
+min_of <- function(tbl, variable, digits = 2) {
+  r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["min"]], digits)
+}
+max_of <- function(tbl, variable, digits = 2) {
+  r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["max"]], digits)
+}
+
+# Reciprocal of a covariate_summary() statistic, on a per-`scale` basis: the
+# primary-care indicator is a supply density (GP-equivalents per 1,000), but the
+# prose also quotes the caseload (residents per GP-equivalent), and the two are
+# reciprocals. Inverting `min` gives the LARGEST caseload, so the arguments are
+# deliberately crossed at the call site rather than here.
+recip_of <- function(tbl, variable, stat, scale = 1000, digits = 0) {
+  r <- .cov_row(tbl, variable)
+  if (is.null(r) || !is.finite(r[[stat]]) || r[[stat]] == 0) return("\u2014")
+  fmt_n(scale / r[[stat]], digits)
+}
 
 # Tolerant of the exposure-year suffix: cor_between(cc, "no2", "pm25") finds
 # no2_2023 and pm25_2023 without the year having to be written into the prose.
@@ -232,7 +249,8 @@ control_sentence <- function(ct) {
   parts <- character(0)
   if (!is.null(tr)) {
     parts <- c(parts, sprintf(
-      "The coefficient for travel time to the nearest thrombectomy hub on cerebrovascular mortality was %s.",
+      "The coefficient for travel time to the nearest thrombectomy hub on %s was %s.",
+      tolower(if (is.null(tr[["outcome"]])) "the tracer outcome" else tr[["outcome"]]),
       fmt_ci(tr[["estimate"]], tr[["ci_low"]], tr[["ci_high"]], 3)))
   }
   if (!is.null(nco)) {
@@ -380,4 +398,61 @@ moran_verdict <- function(tbl, model, alpha = 0.05) {
   p <- tbl[["p_value"]][tbl[["model"]] == model]
   if (!length(p) || is.na(p[1])) "[NOT COMPUTED]" else
     if (p[1] > alpha) "had" else "had not"
+}
+
+
+# --- stroke sub-model prose ---------------------------------------------------
+
+#' One sentence on how much of the cerebrovascular burden the reference outcome
+#' actually covers. The dilution arithmetic is deliberately explicit: an access
+#' effect can only act on the thrombectomy-eligible subset, and stating that
+#' fraction is what stops a null being read as "access does not matter".
+stroke_subtype_sentence <- function(sub,
+                                    lvo = 0.20, in_window = 0.50,
+                                    mortality_reduction = 0.30) {
+  if (is.null(sub) || !nrow(sub)) return("Subtype counts were not available.")
+
+  tot  <- sum(sub[["deaths"]])
+  i63  <- sum(sub[["deaths"]][grepl("^I63", sub[["subtype"]])])
+  haem <- sum(sub[["deaths"]][grepl("^I60", sub[["subtype"]])])
+  if (!tot) return("Subtype counts were not available.")
+
+  reachable <- (i63 / tot) * lvo * in_window
+
+  sprintf(paste0(
+    "Of %s cerebrovascular deaths at all ages, %s were cerebral infarction ",
+    "(%s) and %s were haemorrhagic (%s), which is a different care channel. ",
+    "If the exposure acted through thrombectomy alone it could touch roughly ",
+    "%s of the reference outcome (%s large-vessel occlusion, %s presenting in ",
+    "window), so a %s reduction in mortality within that subset would move ",
+    "total I63 mortality by about %s \u2014 below what a design of this size ",
+    "can resolve."),
+    fmt_n(tot), fmt_n(i63), fmt_pct(100 * i63 / tot),
+    fmt_n(haem), fmt_pct(100 * haem / tot),
+    fmt_pct(100 * reachable / (i63 / tot)),
+    fmt_pct(100 * lvo), fmt_pct(100 * in_window),
+    fmt_pct(100 * mortality_reduction),
+    fmt_pct(100 * reachable * mortality_reduction))
+}
+
+#' One sentence pairing what the smoothing did with how many areas survive it.
+i63_smoothing_sentence <- function(sm, exc) {
+  val <- function(q) {
+    i <- grep(q, sm[["Quantity"]], fixed = TRUE)
+    if (!length(i)) "\u2014" else sm[["Value"]][i[1]]
+  }
+  n80 <- if ("p80" %in% names(exc)) exc[["p80"]] else NA_integer_
+  n95 <- if ("p95" %in% names(exc)) exc[["p95"]] else NA_integer_
+
+  sprintf(paste0(
+    "With a median of %s expected deaths per area, the raw ratio ranged %s and ",
+    "the BYM2-smoothed relative risk %s; %s of the residual variation was ",
+    "spatially structured. %s of %s areal units carry at least an 80%% ",
+    "posterior probability that all-age I63 mortality runs more than 20%% ",
+    "above expectation, and %s reach 95%%."),
+    val("Median expected deaths per area"),
+    val("Range of raw SMR"),
+    val("Range of smoothed relative risk"),
+    val("Mixing parameter rho"),
+    fmt_n(n80), fmt_n(exc[["n_areas"]]), fmt_n(n95))
 }

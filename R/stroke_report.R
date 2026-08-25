@@ -253,20 +253,35 @@ plot_travel_time <- function(geo, value = "t_hub_mean", centres = NULL,
 #' one here but not in the model, the spatial term has absorbed it, and that is
 #' a different problem with a different remedy.
 #'
-#' @param geo Modelling `sf` with `cvd_obs` / `cvd_exp` attached.
+#' @param geo Modelling `sf` with the observed/expected pair attached.
 #' @param x Exposure column.
+#' @param obs_col,exp_col Observed and expected counts. Default to the
+#'   cerebrovascular 0-74 tracer; pass `"i63_obs"` / `"i63_exp"` for the all-age
+#'   cerebral-infarction outcome.
+#' @param ylab Y-axis label. Derived from `obs_col` when `NULL`.
 #' @param caption Passed to `labs()`.
 #' @return A ggplot.
 #' @export
-plot_tracer_raw <- function(geo, x = "t_hub_mean", caption = NULL) {
+plot_tracer_raw <- function(geo, x = "t_hub_mean",
+                            obs_col = "cvd_obs", exp_col = "cvd_exp",
+                            ylab = NULL, caption = NULL) {
 
   tab <- sf::st_drop_geometry(geo)
-  require_cols(tab, c(x, "cvd_obs", "cvd_exp"), "geo")
+  require_cols(tab, c(x, obs_col, exp_col), "geo")
+
+  if (is.null(ylab)) {
+    ylab <- switch(obs_col,
+                   cvd_obs    = "Cerebrovascular SMR (observed / expected)",
+                   i63_obs    = "I63 SMR, all ages (observed / expected)",
+                   haem_obs   = "Haemorrhagic stroke SMR (observed / expected)",
+                   cvdall_obs = "All-cerebrovascular SMR, all ages",
+                   "SMR (observed / expected)")
+  }
 
   d <- data.frame(
     x   = as.numeric(tab[[x]]),
-    smr = tab[["cvd_obs"]] / tab[["cvd_exp"]],
-    w   = tab[["cvd_exp"]]
+    smr = tab[[obs_col]] / tab[[exp_col]],
+    w   = tab[[exp_col]]
   )
   rho <- stats::cor(d$x, d$smr, method = "spearman", use = "complete.obs")
 
@@ -279,7 +294,7 @@ plot_tracer_raw <- function(geo, x = "t_hub_mean", caption = NULL) {
     ggplot2::scale_size_area(name = "Expected deaths", max_size = 5) +
     ggplot2::labs(
       x = "Population-weighted travel time (minutes)",
-      y = "Cerebrovascular SMR (observed / expected)",
+      y = ylab,
       subtitle = sprintf("Spearman rank correlation = %.3f", rho),
       caption = caption
     ) +
@@ -642,4 +657,138 @@ attributable_excess <- function(fit, geo, var, z_var = NULL,
     upper_bound    = max(abs(q)),
     total_per_year = total_yr
   )
+}
+
+
+# Reporting summaries for the stroke sub-model ---------------------------------
+
+#' What the BYM2 smoothing did to an outcome surface
+#'
+#' The raw ratio and the smoothed relative risk are the same quantity seen
+#' before and after shrinkage, and the gap between their ranges is the honest
+#' statement of how much of the raw map was noise. Reporting the two ranges
+#' side by side with `rho` stops a reader taking a dramatic raw map at face
+#' value: with a median of two or three expected deaths per area, one extra
+#' death moves a small unit's ratio by a large fraction.
+#'
+#' @param geo The `sf` carrying the observed and expected counts.
+#' @param aug Output of [augment_bym2()] for the same outcome.
+#' @param diag Output of [check_bym2_fit()] for the same fit.
+#' @param obs_col,exp_col Observed and expected count columns in `geo`.
+#' @param rr_col Smoothed relative-risk column in `aug`.
+#'
+#' @return A two-column tibble, `Quantity` and `Value`, ready for `kable()`.
+#' @examples
+#' \dontrun{
+#' smoothing_summary(smr_geo_allage, aug_i63, diag_i63_bym2,
+#'                   obs_col = "i63_obs", exp_col = "i63_exp")
+#' }
+#' @seealso [exceedance_count()]
+#' @export
+smoothing_summary <- function(geo, aug, diag,
+                              obs_col = "cvd_obs", exp_col = "cvd_exp",
+                              rr_col  = "bym2_rr") {
+
+  tab <- sf::st_drop_geometry(geo)
+  require_cols(tab, c(obs_col, exp_col), "geo")
+  aug_tab <- sf::st_drop_geometry(aug)
+  require_cols(aug_tab, rr_col, "aug")
+
+  raw <- tab[[obs_col]] / tab[[exp_col]]
+  rr  <- aug_tab[[rr_col]]
+
+  rng2 <- function(x) sprintf("%.2f to %.2f",
+                              min(x, na.rm = TRUE), max(x, na.rm = TRUE))
+
+  tibble::tibble(
+    Quantity = c(
+      "Median expected deaths per area",
+      "Mixing parameter rho (share of residual variation that is spatially structured)",
+      "Range of raw SMR",
+      "Range of smoothed relative risk",
+      "Max R-hat",
+      "Min effective sample size"),
+    Value = c(
+      sprintf("%.1f", stats::median(tab[[exp_col]], na.rm = TRUE)),
+      sprintf("%.3f", diag[["rho_mean"]]),
+      rng2(raw),
+      rng2(rr),
+      sprintf("%.4f", diag[["rhat_max"]]),
+      format(round(diag[["neff_min"]]), big.mark = ","))
+  )
+}
+
+
+#' Count areas above posterior exceedance cut-offs
+#'
+#' @param aug Output of [augment_bym2()].
+#' @param col Exceedance-probability column.
+#' @param cutoffs Posterior probabilities to count above.
+#'
+#' @return A one-row tibble: `n_areas`, then one `p80`-style column per cut-off,
+#'   with the relative-risk threshold carried in the `"threshold"` attribute
+#'   when `aug` records one.
+#' @examples
+#' \dontrun{
+#' exceedance_count(aug_i63)
+#' }
+#' @seealso [smoothing_summary()]
+#' @export
+exceedance_count <- function(aug, col = "bym2_exceed",
+                             cutoffs = c(0.80, 0.95)) {
+
+  tab <- sf::st_drop_geometry(aug)
+  require_cols(tab, col, "aug")
+  x <- tab[[col]]
+
+  out <- tibble::tibble(n_areas = sum(!is.na(x)))
+  for (cut in cutoffs) {
+    out[[paste0("p", round(100 * cut))]] <- sum(x > cut, na.rm = TRUE)
+  }
+  attr(out, "threshold") <- attr(aug, "threshold")
+  out
+}
+
+
+#' Cerebrovascular deaths by subtype and the care channel each belongs to
+#'
+#' The point of the table is not epidemiological description but outcome
+#' choice. Thrombectomy acts on cerebral infarction alone; neurosurgical and
+#' neurocritical care act on the haemorrhagic subtypes. An outcome that pools
+#' them dilutes any access effect toward zero by construction, and the size of
+#' that dilution is what this table makes visible.
+#'
+#' @param mort_raw Output of [import_mortality()], unfiltered.
+#' @param age_max Upper age, inclusive. `NULL` (default) keeps all ages.
+#'
+#' @return A tibble: `subtype`, `deaths`, `pct`, ordered by `deaths`.
+#' @examples
+#' \dontrun{
+#' stroke_subtype_table(mort_raw)
+#' }
+#' @export
+stroke_subtype_table <- function(mort_raw, age_max = NULL) {
+
+  require_cols(mort_raw, c("causa", "eta"), "mort_raw")
+
+  d <- mort_raw
+  d[["key"]] <- toupper(gsub("[^A-Za-z0-9]", "", as.character(d[["causa"]])))
+  d <- d[startsWith(d[["key"]], "I6"), , drop = FALSE]
+  if (!is.null(age_max)) {
+    d <- d[!is.na(d[["eta"]]) & d[["eta"]] <= age_max, , drop = FALSE]
+  }
+
+  k3 <- substr(d[["key"]], 1, 3)
+  subtype <- dplyr::case_when(
+    k3 == "I63"                     ~ "I63 Cerebral infarction (thrombectomy)",
+    k3 %in% c("I60", "I61", "I62")  ~ "I60-I62 Haemorrhagic (neurosurgery)",
+    k3 == "I64"                     ~ "I64 Stroke, type not specified",
+    k3 == "I69"                     ~ "I69 Sequelae",
+    TRUE                            ~ paste(k3, "Other cerebrovascular")
+  )
+
+  tibble::tibble(subtype = subtype) |>
+    dplyr::count(subtype, name = "deaths") |>
+    dplyr::mutate(pct = 100 * .data[["deaths"]] / sum(.data[["deaths"]])) |>
+    dplyr::arrange(dplyr::desc(.data[["deaths"]]))
 }

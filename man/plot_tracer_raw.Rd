@@ -4,12 +4,25 @@
 \alias{plot_tracer_raw}
 \title{Scatter of the tracer outcome against the exposure, before any model}
 \usage{
-plot_tracer_raw(geo, x = "t_hub_mean", caption = NULL)
+plot_tracer_raw(
+  geo,
+  x = "t_hub_mean",
+  obs_col = "cvd_obs",
+  exp_col = "cvd_exp",
+  ylab = NULL,
+  caption = NULL
+)
 }
 \arguments{
-\item{geo}{Modelling \code{sf} with \code{cvd_obs} / \code{cvd_exp} attached.}
+\item{geo}{Modelling \code{sf} with the observed/expected pair attached.}
 
 \item{x}{Exposure column.}
+
+\item{obs_col, exp_col}{Observed and expected counts. Default to the
+cerebrovascular 0-74 tracer; pass \code{"i63_obs"} / \code{"i63_exp"} for the all-age
+cerebral-infarction outcome.}
+
+\item{ylab}{Y-axis label. Derived from \code{obs_col} when \code{NULL}.}
 
 \item{caption}{Passed to \code{labs()}.}
 }

@@ -47,7 +47,10 @@ utils::globalVariables(c(
   "smr", "isr", "total_smr", "total_isr", "deaths",
   "person_years", "population",
 
-  # -- NAR primary-care pipeline (R/nar_density.R) ----------------------------
+  # -- primary-care indicator (R/import_.R) -----------------------------------
+  "numeratore", "denominatore", "indicatore",
+
+  # -- NAR density reference implementation (R/nar_density.R) -----------------
   "resident_id", "gp_id", "event_date", "event_type", "death_date",
   "birth_year", "area_id", "obs_end", "spell_start", "spell_end",
   "list_size", "is_artifact", "l_clamped", "clamp_status",

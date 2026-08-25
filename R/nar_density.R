@@ -32,9 +32,13 @@
 #     deaths, are resolved to that day; the error is bounded by half a month
 #     per transition.
 #
+# STATUS: the pipeline does NOT run this estimator. The area-level result is
+# computed upstream against the register and read in by import_gp_density();
+# what follows is the reference implementation of that computation, kept so the
+# definition of the indicator is auditable in one place and so the estimator can
+# be re-run here if the event-level export is ever loaded directly.
+#
 # ARCHITECTURE (each function = one candidate {targets} node):
-#   simulate_nar()            -> synthetic export (testing only; mimics the
-#                                SAS output: anchor rows, changes, deaths)
 #   build_spells()            -> assignment intervals from events
 #   build_observation()       -> per-resident observation end (death/censor)
 #   clamp_supply()            -> the visible list-size assumptions
@@ -51,123 +55,10 @@
 #' @importFrom dplyr filter mutate select group_by summarise arrange left_join
 #' @importFrom dplyr n distinct bind_rows if_else coalesce
 #' @importFrom lubridate floor_date year
-#' @importFrom stats runif rgamma
 #' @importFrom tibble tibble
 #' @name nar-imports
 #' @keywords internal
 NULL
-
-# ---------------------------------------------------------------------------
-
-#' Simulate a miniature NAR export (development/testing only)
-#'
-#' Mimics the table the SAS extraction produces: for every resident with any
-#' assistance history, one anchor event before `study_start` (or a first
-#' assignment during the window), zero or more in-window changes, and — for a
-#' fraction of residents — a `death` event that cleanly ends both assistance
-#' and observation. A fraction of residents is never assigned (structural
-#' unassigned); they still appear in `residents` and contribute unassigned
-#' person-time while alive.
-#'
-#' @param n_residents,n_gps,n_areas Integers. Population sizes.
-#' @param study_start,study_end Dates bounding the study window.
-#' @param p_never_assigned Share of residents never assigned to any GP.
-#' @param p_gp_retires Share of GPs retiring in-window (orphaning their list).
-#' @param reassignment_gap_days Length-2 integer: min/max administrative gap
-#'   before a retired GP's patients are reassigned.
-#' @param p_dies Share of residents dying during the window.
-#' @param seed RNG seed.
-#'
-#' @return list of tibbles:
-#'   \describe{
-#'     \item{residents}{`resident_id`, `area_id`.}
-#'     \item{gps}{`gp_id`, `birth_year`.}
-#'     \item{events}{`resident_id`, `event_date`, `event_type`
-#'       (`"assignment"`, `"revocation"`, `"death"`), `gp_id` (NA except on
-#'       assignments).}
-#'   }
-#' @export
-simulate_nar <- function(n_residents = 2000,
-                         n_gps = 25,
-                         n_areas = 8,
-                         study_start = as.Date("2022-01-01"),
-                         study_end = as.Date("2024-12-31"),
-                         p_never_assigned = 0.04,
-                         p_gp_retires = 0.15,
-                         reassignment_gap_days = c(10L, 60L),
-                         p_dies = 0.06,
-                         seed = 42L) {
-  set.seed(seed)
-
-  residents <- tibble::tibble(
-    resident_id = sprintf("R%05d", seq_len(n_residents)),
-    area_id     = sprintf("A%02d", sample.int(n_areas, n_residents,
-                                              replace = TRUE,
-                                              prob = stats::runif(n_areas, 0.5, 2)))
-  )
-
-  gps <- tibble::tibble(
-    gp_id      = sprintf("G%03d", seq_len(n_gps)),
-    birth_year = sample(1955:1985, n_gps, replace = TRUE)
-  )
-
-  gp_weight <- stats::rgamma(n_gps, shape = 1.5)
-  retiring  <- sample(gps$gp_id, size = round(n_gps * p_gp_retires))
-  retire_date <- setNames(
-    sample(seq(study_start + 120, study_end - 120, by = "day"),
-           length(retiring), replace = TRUE),
-    retiring
-  )
-  never_assigned <- stats::runif(n_residents) < p_never_assigned
-  dies       <- stats::runif(n_residents) < p_dies
-  death_date <- as.Date(ifelse(
-    dies, sample(seq(study_start + 30, study_end, by = "day"),
-                 n_residents, replace = TRUE), NA), origin = "1970-01-01")
-
-  events <- purrr::pmap(list(residents$resident_id, never_assigned, death_date),
-                 function(rid, never, ddate) {
-    ev <- NULL
-    if (!never) {
-      # Anchor: most residents' current choice predates the window (the SAS
-      # export carries exactly one such row); some first register in-window.
-      start <- if (stats::runif(1) < 0.85) study_start - sample(30:1000, 1)
-               else sample(seq(study_start, study_end - 60, by = "day"), 1)
-      gp <- sample(gps$gp_id, 1, prob = gp_weight)
-      ev <- tibble::tibble(resident_id = rid, event_date = start,
-                   event_type = "assignment", gp_id = gp)
-      if (gp %in% retiring && retire_date[[gp]] > start &&
-          (is.na(ddate) || retire_date[[gp]] < ddate)) {
-        gap    <- sample(reassignment_gap_days[1]:reassignment_gap_days[2], 1)
-        new_gp <- sample(setdiff(gps$gp_id, gp), 1)
-        ev <- dplyr::bind_rows(
-          ev,
-          tibble::tibble(resident_id = rid, event_date = retire_date[[gp]],
-                 event_type = "revocation", gp_id = NA_character_),
-          tibble::tibble(resident_id = rid, event_date = retire_date[[gp]] + gap,
-                 event_type = "assignment", gp_id = new_gp))
-      } else if (stats::runif(1) < 0.10) {
-        change_day <- sample(seq(pmax(start + 30, study_start),
-                                 study_end, by = "day"), 1)
-        if (is.na(ddate) || change_day < ddate) {
-          ev <- dplyr::bind_rows(
-            ev,
-            tibble::tibble(resident_id = rid, event_date = change_day,
-                   event_type = "assignment",
-                   gp_id = sample(setdiff(gps$gp_id, gp), 1)))
-        }
-      }
-    }
-    if (!is.na(ddate)) {
-      ev <- dplyr::bind_rows(
-        ev,
-        tibble::tibble(resident_id = rid, event_date = ddate,
-               event_type = "death", gp_id = NA_character_))
-    }
-    ev
-  }) |> purrr::list_rbind() |> dplyr::arrange(resident_id, event_date)
-
-  list(residents = residents, gps = gps, events = events)
-}
 
 # ---------------------------------------------------------------------------
 

@@ -44,10 +44,12 @@ tar_load(c(
   area_shp, stroke_centres, stroke_times, stroke_area, diag_stroke,
   smr_geo_full, smr_geo_tracer, smr_geo_allage, C_matrix,
   control_fits, control_table, control_diagnostics,
-  aug_cvd, aug_i63, aug_haem, diag_cvd_bym2, diag_i63_bym2,
+  aug_cvd, aug_i63, aug_haem, diag_cvd_bym2, diag_i63_bym2, fig_haem_pair,
   stroke_times_table, exposure_contrast_table, tracer_per_10min,
   tracer_engine_table, tracer_exposure_table, i63_engine_table,
   outcome_feasibility_table, allage_table, allage_diagnostics,
+  stroke_subtypes, stroke_subtypes_under75,
+  i63_smoothing, i63_exceedance,
   mort_raw
 ))
 ```
@@ -226,42 +228,15 @@ Thrombectomy acts on cerebral infarction (I63) alone; neurosurgical and neurocri
 (I60-I62).
 
 ```{r subtype}
-sub <- mort_raw |>
-  mutate(key = toupper(gsub("[^A-Za-z0-9]", "", causa))) |>
-  filter(startsWith(key, "I6"), eta < 75) |>
-  mutate(k3 = substr(key, 1, 3),
-         subtype = case_when(
-           k3 == "I63"                ~ "I63 Cerebral infarction (thrombectomy)",
-           k3 %in% c("I60","I61","I62") ~ "I60-I62 Haemorrhagic (neurosurgery)",
-           k3 == "I64"                ~ "I64 Stroke, type not specified",
-           k3 == "I69"                ~ "I69 Sequelae",
-           TRUE                       ~ paste(k3, "Other cerebrovascular")
-         )) |>
-  count(subtype, name = "deaths") |>
-  mutate(pct = 100 * deaths / sum(deaths)) |>
-  arrange(desc(deaths))
-
-sub |>
+stroke_subtypes_under75 |>
   mutate(pct = fmt_pct(pct)) |>
   kable(col.names = c("Subtype", "Deaths", "%"),
         caption = "Cerebrovascular deaths under 75, by subtype. Note which channel each belongs to.")
 ```
 
 ```{r dilution, results="asis"}
-i63  <- sum(sub$deaths[grepl("^I63", sub$subtype)])
-haem <- sum(sub$deaths[grepl("^I60", sub$subtype)])
-tot  <- sum(sub$deaths)
-lvo <- 0.20; win <- 0.50
-thromb <- (i63 / tot) * lvo * win
-
-cat(sprintf(paste0(
-  "\n> **Dilution.** If the exposure acted through thrombectomy alone it could ",
-  "touch %s of this outcome (%s I63 x ~%.0f%% large-vessel occlusion x ~%.0f%% ",
-  "presenting in window). A 30%% mortality reduction in that subset would move ",
-  "total cerebrovascular mortality by %s - far below anything this design can ",
-  "resolve.\n\n"),
-  fmt_pct(100*thromb), fmt_pct(100*i63/tot), 100*lvo, 100*win,
-  fmt_pct(100*thromb*0.30)))
+cat("\n> **Dilution.** ",
+    stroke_subtype_sentence(stroke_subtypes_under75), "\n\n", sep = "")
 ```
 
 ```{r fig-raw, fig.cap="Cerebrovascular SMR against travel time to the nearest hub. Point size is the expected count, so the large points are the areas the model actually learns from.", fig.width=7.5, fig.height=4.5}
@@ -295,7 +270,7 @@ control_table |>
   select(role, outcome, label, estimate, ci_low, ci_high, verdict) |>
   kable(col.names = c("Role", "Outcome", "Exposure", "RR per SD", "2.5%",
                       "97.5%", "Verdict"),
-        caption = "Tracer and controls. The verdict column checks direction against the pre-specified expectation, not merely whether the interval clears the null.")
+        caption = "Tracer and controls. The tracer arm is fitted on the reference outcome (I63, all ages), not on the 0-74 cerebrovascular outcome of §2. The verdict column checks direction against the pre-specified expectation, not merely whether the interval clears the null.")
 ```
 
 Thus, the original proposition could never show an effect.
@@ -414,23 +389,8 @@ plot_exceedance_map(aug_i63, title = NULL, subtitle = NULL) |>
 ### Haemorrhagic stroke, the other channel
 
 
-```{r fig-haem, fig.cap="Haemorrhagic stroke (I60-I62) under 75: smoothed relative risk and exceedance probability.", fig.width=11, fig.height=5.2}
-p_haem_rr  <- plot_smr_map(aug_haem, value = "bym2_rr", title = NULL,
-                           subtitle = NULL, caption = NULL) |>
-  overlay_hubs(stroke_centres)
-p_haem_exc <- plot_exceedance_map(aug_haem, title = NULL, subtitle = NULL) |>
-  overlay_hubs(stroke_centres)
-
-if (requireNamespace("patchwork", quietly = TRUE)) {
-  patchwork::wrap_plots(
-    p_haem_rr  + ggplot2::ggtitle("Smoothed relative risk"),
-    p_haem_exc + ggplot2::ggtitle("P(RR > 1.20)"),
-    nrow = 1
-  ) & ggplot2::theme(
-    plot.title = ggplot2::element_text(face = "bold", hjust = 0.5,
-                                       size = ggplot2::rel(0.95)),
-    legend.position = "bottom")
-} else p_haem_rr
+```{r fig-haem, fig.cap="Haemorrhagic stroke (I60-I62) under 75: smoothed relative risk and exceedance probability. Not a negative control for hub access \u2014 level-II centres perform neurosurgery as well as thrombectomy \u2014 so this is descriptive only.", fig.width=11, fig.height=5.2}
+fig_haem_pair
 ```
 
 ```{r fig-i63-raw, fig.cap="All-age I63 SMR against travel time to the nearest hub.", fig.width=7.5, fig.height=4.5}
