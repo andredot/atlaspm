@@ -379,7 +379,6 @@ list(
   tar_target(fig_mech_facets,
              plot_smr_facets(smr_geo_mech_bym2,
                              cols   = dplyr::matches("^M_.*_bym2$"),
-                             breaks = c(-Inf, 0.90, 0.95, 1.05, 1.10, Inf),
                              strip_suffix = "_bym2$",
                              title = NULL)),
   tar_target(fig_mech_exceedance, plot_exceedance_facets(smr_geo_mech_bym2)),

@@ -280,7 +280,6 @@ cat(sprintf(
   )
 ```
 
-
 ## 2.3 Control panel
 
 ```{r control-expectations}

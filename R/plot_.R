@@ -34,18 +34,19 @@
 #' @export
 plot_smr_map <- function(smr,
                          value    = "total_smr",
-                         breaks   = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+                         breaks   = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
                          title    = "Avoidable mortality by area",
                          subtitle = "Indirectly standardised mortality ratio (SMR), all avoidable causes",
                          caption  = "SMR = 1 means deaths match the area-wide age-sex expectation.") {
 
-  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
-  pal <- c(
-    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
-    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
-    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
-    "1.05 \u2013 1.10" = "#dca678",  # warm clay
-    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
+  labels <- smr_break_labels(breaks)
+  pal <- stats::setNames(
+    c("#5a8a7d",   # deep sage  (well below expected)
+      "#a3c4b5",   # soft green
+      "#f2e8d5",   # pale sand  (~ expected)
+      "#dca678",   # warm clay
+      "#b5651d"),  # terracotta (well above expected)
+    labels
   )
 
   # Ensure a properly registered sf: a table whose geometry is a bare sfc
@@ -130,7 +131,7 @@ plot_smr_map <- function(smr,
 #' @export
 plot_smr_facets <- function(smr,
                             cols         = dplyr::matches("^M_.*_smr$"),
-                            breaks       = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+                            breaks       = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
                             ncol         = 4,
@@ -139,13 +140,14 @@ plot_smr_facets <- function(smr,
                                              "1 = deaths match the age-sex expectation"),
                             caption  = "Each panel standardised on the same age-sex schedule; bins shared across panels.") {
 
-  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
-  pal <- c(
-    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
-    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
-    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
-    "1.05 \u2013 1.10" = "#dca678",  # warm clay
-    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
+  labels <- smr_break_labels(breaks)
+  pal <- stats::setNames(
+    c("#5a8a7d",   # deep sage  (well below expected)
+      "#a3c4b5",   # soft green
+      "#f2e8d5",   # pale sand  (~ expected)
+      "#dca678",   # warm clay
+      "#b5651d"),  # terracotta (well above expected)
+    labels
   )
 
   smr <- sf::st_as_sf(smr)   # defend against a demoted (non-sf) input
@@ -652,4 +654,43 @@ plot_exceedance_facets <- function(geo,
       legend.key.size = ggplot2::unit(0.9, "lines"),
       plot.margin     = ggplot2::margin(12, 12, 12, 12)
     )
+}
+
+#' Legend labels for a set of SMR cut points
+#'
+#' Turns `c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)` into
+#' `c("< 0.90", "0.90 - 0.95", "0.95 - 1.05", "1.05 - 1.10", "> 1.10")`.
+#'
+#' Exists so that `breaks` can be changed in one place. Keeping labels as a
+#' separate constant meant the two could silently disagree, and a legend that
+#' contradicts the cut points it describes is a quietly wrong figure rather
+#' than a broken one.
+#'
+#' @param breaks Numeric vector of cut points, normally opening with `-Inf` and
+#'   closing with `Inf`. Intervals are left-closed, matching
+#'   `cut(..., right = FALSE)`.
+#' @param digits Decimal places in the labels.
+#'
+#' @return A character vector, one shorter than `breaks`.
+#' @examples
+#' smr_break_labels(c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf))
+#' smr_break_labels(c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf))
+#' @export
+smr_break_labels <- function(breaks, digits = 2) {
+
+  n <- length(breaks)
+  if (n < 3L) {
+    stop("`breaks` needs at least three cut points to make two tiers.",
+         call. = FALSE)
+  }
+  fm <- function(x) formatC(x, format = "f", digits = digits)
+
+  lab <- character(n - 1L)
+  for (i in seq_len(n - 1L)) {
+    lo <- breaks[i]; hi <- breaks[i + 1L]
+    lab[i] <- if (is.infinite(lo) && lo < 0) paste0("< ", fm(hi))
+    else if (is.infinite(hi)) paste0("> ", fm(lo))
+    else paste0(fm(lo), " \u2013 ", fm(hi))
+  }
+  lab
 }
