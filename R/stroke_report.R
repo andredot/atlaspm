@@ -478,3 +478,168 @@ outcome_feasibility <- function(outcome, label) {
     verdict        = verdict
   )
 }
+
+
+#' Overlay the thrombectomy hubs on an existing map
+#'
+#' Adds hubs to a map produced by [plot_smr_map()] or [plot_exceedance_map()]
+#' without disturbing the fill scale. Those functions use a discrete
+#' `scale_fill_manual`, so a second layer mapping anything to `fill` would
+#' either fail or silently recycle the palette; the hub marker therefore sets
+#' fill as a fixed parameter rather than an aesthetic.
+#'
+#' @param p A ggplot from one of the map functions.
+#' @param centres `sf` of stroke centres.
+#' @param hubs_only Show only level-II hubs. Default `TRUE`.
+#' @param size,fill,colour Marker appearance. White with a dark outline reads
+#'   against every tier of both the SMR and the exceedance palette.
+#'
+#' @return The ggplot, with the hub layer added.
+#' @examples
+#' \dontrun{
+#' plot_smr_map(aug_cvd, value = "bym2_rr") |> overlay_hubs(stroke_centres)
+#' }
+#' @export
+overlay_hubs <- function(p, centres, hubs_only = TRUE, size = 2.4,
+                         fill = "white", colour = "grey10") {
+
+  cen <- sf::st_as_sf(centres)
+  if (hubs_only && "is_hub" %in% names(cen)) cen <- cen[cen[["is_hub"]], ]
+
+  p + ggplot2::geom_sf(
+    data = cen, inherit.aes = FALSE,
+    shape = 24, size = size, fill = fill, colour = colour, stroke = 0.5
+  )
+}
+
+
+#' Two maps side by side, sharing one legend
+#'
+#' For raw-versus-smoothed comparisons, where the whole point is that the two
+#' surfaces are on the same scale. Collecting the guide is not cosmetic: two
+#' separate legends invite the reader to compare colours that happen to look
+#' alike but belong to different scales, which is the specific mistake this
+#' pairing exists to prevent.
+#'
+#' @param p1,p2 ggplots, normally both from [plot_smr_map()].
+#' @param titles Optional length-2 character vector of panel titles.
+#' @param position Where to put the collected legend.
+#'
+#' @return A patchwork object, or `p1` with a message if patchwork is absent.
+#' @examples
+#' \dontrun{
+#' map_pair(plot_smr_map(g, "cvd_smr"), plot_smr_map(aug_cvd, "bym2_rr"),
+#'          titles = c("Raw", "Smoothed"))
+#' }
+#' @export
+map_pair <- function(p1, p2, titles = NULL, position = "bottom") {
+
+  if (!is.null(titles)) {
+    p1 <- p1 + ggplot2::ggtitle(titles[1])
+    p2 <- p2 + ggplot2::ggtitle(titles[2])
+  }
+
+  if (!requireNamespace("patchwork", quietly = TRUE)) {
+    message("patchwork is not installed; returning the first panel only. ",
+            "install.packages('patchwork') to see the pair.")
+    return(p1)
+  }
+
+  styled <- ggplot2::theme(
+    plot.title      = ggplot2::element_text(face = "bold", hjust = 0.5,
+                                            size = ggplot2::rel(0.95)),
+    legend.position = position
+  )
+
+  patchwork::wrap_plots(p1, p2, nrow = 1) +
+    patchwork::plot_layout(guides = "collect") &
+    styled
+}
+
+
+#' Deaths attributable to an exposure, under the fitted model
+#'
+#' Answers "how many of these deaths does the model attribute to travel time?"
+#' rather than "is the coefficient different from zero". The two are not the
+#' same question, and for a policy audience the first is the useful one.
+#'
+#' The counterfactual holds everything else fixed - including the spatial
+#' random effect - and moves only the exposure, to `reference`. The difference
+#' between fitted and counterfactual counts, summed over areas and annualised,
+#' is the attributable excess.
+#'
+#' \strong{Read the interval, not the point estimate.} When the coefficient is
+#' null the point estimate will be near zero, and that is not the finding. The
+#' finding is the upper bound: the largest number of deaths per year the data
+#' allow to be attributed to access. A tight bound around zero is a
+#' substantive, quantified negative result; a wide one means the design cannot
+#' say, and should be reported that way.
+#'
+#' \strong{This is model-based attribution, not a causal effect.} It inherits
+#' every identification problem of the fit it is given - most importantly, that
+#' hub placement is endogenous to population need, so an observational contrast
+#' between near and far areas is confounded by the reasons hubs were sited
+#' where they are.
+#'
+#' @param fit A fitted model containing `var_z`.
+#' @param geo The `sf` it was fitted to.
+#' @param var Raw exposure column, e.g. `"t_hub_mean"`.
+#' @param z_var Standardised column in the model. Derived when `NULL`.
+#' @param reference Counterfactual exposure value. `"min"` uses the best-served
+#'   area (what would be avoided if everyone had that access); a number uses
+#'   that value, e.g. `45` for the regional centralisation threshold.
+#' @param obs_col Observed-count column, for the percentage denominator.
+#' @param n_years Years the counts span.
+#' @param probs Credible-interval bounds.
+#'
+#' @return A one-row tibble: attributable deaths per year with interval, as a
+#'   count and a share of the outcome.
+#' @examples
+#' \dontrun{
+#' attributable_excess(control_fits$tracer, smr_geo_tracer, "t_hub_mean",
+#'                     obs_col = "cvd_obs")
+#' }
+#' @seealso [mde_per_unit()], [residual_excess()]
+#' @export
+attributable_excess <- function(fit, geo, var, z_var = NULL,
+                                reference = "min",
+                                obs_col   = "cvd_obs",
+                                n_years   = 3,
+                                probs     = c(0.025, 0.975)) {
+
+  if (is.null(z_var)) z_var <- paste0(var, "_z")
+  tab <- sf::st_drop_geometry(geo)
+  require_cols(tab, c(var, z_var, obs_col), "geo")
+
+  x      <- as.numeric(tab[[var]])
+  sd_raw <- stats::sd(x, na.rm = TRUE)
+  ref    <- if (identical(reference, "min")) min(x, na.rm = TRUE) else
+    as.numeric(reference)
+
+  # Fitted counts, and draws of the coefficient.
+  mu   <- rstan::extract(fit$stanfit, pars = "fitted")$fitted   # [draws, areas]
+  beta <- as.numeric(as.matrix(fit$stanfit, pars = .beta_pars(fit, z_var)))
+
+  # Counterfactual: same random effect, same intercept, exposure moved to the
+  # reference. On the log scale that is a shift of beta * (x_ref - x_i) / sd.
+  shift  <- outer(beta, (ref - x) / sd_raw)     # [draws, areas]
+  mu_cf  <- mu * exp(shift)
+
+  attr_draws <- rowSums(mu - mu_cf) / n_years
+  q <- stats::quantile(attr_draws, probs = probs, names = FALSE)
+
+  total_yr <- sum(round_half_up(tab[[obs_col]])) / n_years
+
+  tibble::tibble(
+    variable       = var,
+    reference      = ref,
+    exposure_max   = max(x, na.rm = TRUE),
+    deaths_per_year = mean(attr_draws),
+    ci_low         = q[1],
+    ci_high        = q[2],
+    pct_of_outcome = 100 * mean(attr_draws) / total_yr,
+    pct_ci_high    = 100 * q[2] / total_yr,
+    upper_bound    = max(abs(q)),
+    total_per_year = total_yr
+  )
+}

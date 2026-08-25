@@ -29,6 +29,7 @@ N_YEARS     <- length(STUDY_YEARS)
 # Exceedance: the relative-risk threshold, and the posterior probability above
 # which an area is called. 0.80 follows Richardson et al. (2004).
 RR_THRESHOLD <- 1.10
+RR_THRESHOLD_STROKE <- 1.20
 PROB_CUTOFF  <- 0.80
 
 AQ_YEAR <- 2023L
@@ -517,6 +518,52 @@ list(
              collect_coefficients(allage_fits, term_labels = TERM_LABELS)),
   tar_target(allage_diagnostics, collect_diagnostics(allage_fits)),
 
+  tar_target(fit_cvd_bym2,
+             fit_model(smr_geo_tracer, rhs = "1", engine = "bym2",
+                       C = C_matrix, scale_factor = scale_factor,
+                       obs_col = "cvd_obs", exp_col = "cvd_exp", refresh = 0)),
+  tar_target(aug_cvd,
+             augment_bym2(smr_geo_tracer, fit_cvd_bym2,
+                          exp_col = "cvd_exp", pop_col = "person_years",
+                          threshold = RR_THRESHOLD_STROKE)),
+  tar_target(diag_cvd_bym2, check_bym2_fit(fit_cvd_bym2, print = FALSE)),
+
+  tar_target(fit_i63_bym2,
+             fit_model(smr_geo_allage, rhs = "1", engine = "bym2",
+                       C = C_matrix, scale_factor = scale_factor,
+                       obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0)),
+  tar_target(aug_i63,
+             augment_bym2(smr_geo_allage, fit_i63_bym2,
+                          exp_col = "i63_exp", pop_col = "person_years",
+                          threshold = RR_THRESHOLD_STROKE)),
+  tar_target(diag_i63_bym2, check_bym2_fit(fit_i63_bym2, print = FALSE)),
+
+  tar_target(fit_haem_bym2,
+             fit_model(smr_geo_allage, rhs = "1", engine = "bym2",
+                       C = C_matrix, scale_factor = scale_factor,
+                       obs_col = "haem_obs", exp_col = "haem_exp",
+                       refresh = 0)),
+  tar_target(aug_haem,
+             augment_bym2(smr_geo_allage, fit_haem_bym2,
+                          exp_col = "haem_exp", pop_col = "person_years",
+                          threshold = RR_THRESHOLD_STROKE)),
+  tar_target(
+    i63_engines,
+    list(
+      `No spatial term (GLM)` = fit_model(
+        smr_geo_allage, rhs = "t_hub_mean_z", engine = "glm",
+        obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0),
+      `BYM2` = fit_model(
+        smr_geo_allage, rhs = "t_hub_mean_z", engine = "bym2",
+        C = C_matrix, scale_factor = scale_factor,
+        obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0),
+      `ESF` = fit_model(
+        smr_geo_allage, rhs = "t_hub_mean_z", engine = "esf", C = C_matrix,
+        obs_col = "i63_obs", exp_col = "i63_exp", refresh = 0)
+    )
+  ),
+  tar_target(i63_engine_table,
+             collect_coefficients(i63_engines, term_labels = TERM_LABELS)),
   # --- the stroke report ----------------------------------------------------
   tar_quarto(stroke_results, path = file.path("reports", "stroke_results.qmd")),
 

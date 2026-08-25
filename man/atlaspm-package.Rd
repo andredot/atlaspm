@@ -6,8 +6,6 @@
 \alias{atlaspm-package}
 \title{atlaspm: Bayesian Atlas of Preventable Mortality}
 \description{
-\if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
-
 What the package does (one paragraph).
 }
 \author{

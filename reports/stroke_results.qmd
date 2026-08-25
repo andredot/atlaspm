@@ -24,6 +24,7 @@ knitr:
   opts_chunk:
     dev: "png"
     dpi: 300
+    fig.retina: 1
     fig.path: "../output/figures/stroke-"
 editor: 
   markdown: 
@@ -43,19 +44,13 @@ tar_load(c(
   area_shp, stroke_centres, stroke_times, stroke_area, diag_stroke,
   smr_geo_full, smr_geo_tracer, smr_geo_allage, C_matrix,
   control_fits, control_table, control_diagnostics,
+  aug_cvd, aug_i63, aug_haem, diag_cvd_bym2, diag_i63_bym2,
   stroke_times_table, exposure_contrast_table, tracer_per_10min,
-  tracer_engine_table, tracer_exposure_table,
+  tracer_engine_table, tracer_exposure_table, i63_engine_table,
   outcome_feasibility_table, allage_table, allage_diagnostics,
   mort_raw
 ))
 ```
-
-::: callout-note
-## Could this design have detected an effect if one existed?
-A null coefficient from an exposure with no contrast, or from
-an outcome the exposure cannot plausibly move, is not evidence of no
-effect, and the two are indistinguishable in a coefficient table.
-:::
 
 # 1. The stroke network
 
@@ -68,15 +63,6 @@ stroke_centre_table(stroke_centres) |>
         caption = "Every accredited stroke centre used in the routing, including those outside the ATS Milano territory.")
 ```
 
-```{r centre-source-summary}
-sf::st_drop_geometry(stroke_centres) |>
-  count(is_hub, geocode_source) |>
-  mutate(is_hub = ifelse(is_hub, "Hub (SU II)", "Spoke (SU I)")) |>
-  kable(col.names = c("Level", "Geocoding source", "n"),
-        caption = "How each centre was located. Manual overrides and Nominatim results deserve the closest look.")
-```
-
-
 ```{r fig-centres, fig.cap="Accredited stroke centres over the study area. Centres outside the ATS Milano boundary are included in the routing because residents near the edge may be closer to them."}
 plot_stroke_centres(
   area_shp, stroke_centres,
@@ -84,7 +70,7 @@ plot_stroke_centres(
 )
 ```
 
-# 1.2 Travel time
+## 1.2 Travel time
 
 ```{r fig-hub-time, fig.cap="Population-weighted travel time to the nearest level-II thrombectomy hub."}
 plot_travel_time(smr_geo_full, "t_hub_mean", centres = stroke_centres,
@@ -121,15 +107,14 @@ tibble::tibble(
   kable(caption = "The last row is what routing from area centroids would have cost: the largest per-area discrepancy against the population-weighted section mean.")
 ```
 
-
 # 2. Outcome definition
 
 ## 2.1 Original proposition (Cerebrovascular mortality, ages 0–74)
 
 Cerebrovascular mortality, ages 0–74, 2022–2024, indirectly standardised
-for age and sex. This is the tracer outcome.
+for age and sex. This is the original tracer outcome.
 
-```{r fig-cvd-map, fig.cap="Cerebrovascular SMR by areal unit. Hubs overlaid."}
+```{r fig-cvd-map, fig.cap="Cerebrovascular SMR by areal unit, raw (unsmoothed). Hubs overlaid.", fig.width=7.5, fig.height=5.5}
 g <- sf::st_as_sf(smr_geo_tracer)
 g$cvd_smr <- g$cvd_obs / g$cvd_exp
 
@@ -141,6 +126,100 @@ ggplot(g) +
   scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#8c2d04",
                        midpoint = 1, name = "SMR") +
   theme_atlas(map = TRUE)
+```
+
+The map above is the raw ratio. With a median of
+`r fmt_num(median(g$cvd_exp), 1)` expected deaths per area, a single extra
+death moves a small NIL's ratio by a large fraction, so much of that structure
+is noise.
+
+## 2.2 Model
+
+Four specifications are fitted to every outcome in this report. They are not
+competing estimates of one quantity: each answers a different question, and a
+null means something different in each.
+
+| Specification | The question it answers | What a null means here |
+|---|---|---|
+| **GLM + travel time** | Across the whole territory, do areas further from a hub die more? | No marginal association. Confounded by everything that varies spatially — deprivation, urbanicity, age structure beyond the offset. |
+| **BYM2, intercept only** | Where is risk, once small-number noise is shrunk away? | Descriptive; there is no null. Its `rho` says how much residual variation is spatially structured at all. |
+| **BYM2 + travel time** | *Within a neighbourhood of similar spatial risk*, does travel time add anything? | Either no effect, or the exposure is not separable from the random effect. Travel time is itself a smooth spatial surface, so these two compete for the same variation. |
+| **ESF + travel time** | The same question, partitioning the spatial variation differently. | Agreement with BYM2 means the answer does not hinge on how the spatial term is parameterised. Disagreement is itself the finding. |
+
+
+```{r exposure-table}
+tracer_exposure_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Destination set", "Term", "RR per SD", "2.5%", "97.5%",
+                      "ESS", "R-hat"),
+        caption = "Cerebrovascular mortality 0-74 against travel time to two different destination sets.")
+```
+
+The exposure is a smooth spatial surface and so is the BYM2 random
+effect. When two terms describe the same variation, the data cannot say
+which owns it and the covariate coefficient is pulled toward zero
+regardless of whether an effect exists.
+
+A low Effective sample size (ESS) concentrated on the exposure coefficient, 
+while the intercept samples freely, is the signature of a covariate trading
+off against the random effect.
+
+```{r engine-table}
+tracer_engine_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Specification", "Term", "RR per SD", "2.5%", "97.5%",
+                      "ESS", "R-hat"),
+        caption = "The same tracer under three treatments of spatial structure.")
+```
+
+```{r fig-cvd-pair, fig.cap="Cerebrovascular mortality 0\u201374, raw against BYM2-smoothed, on a shared scale.", fig.width=11, fig.height=5.2}
+p_raw <- plot_smr_map(g, value = "cvd_smr", title = NULL, subtitle = NULL,
+                      caption = NULL) |> overlay_hubs(stroke_centres)
+p_bym <- plot_smr_map(aug_cvd, value = "bym2_rr", title = NULL, subtitle = NULL,
+                      caption = NULL) |> overlay_hubs(stroke_centres)
+
+map_pair(p_raw, p_bym,
+         titles = c("Raw SMR (observed / expected)",
+                    "BYM2-smoothed relative risk"))
+```
+
+The smoothing model is intercept-only and contains no travel time. Adjusting
+the descriptive surface for the exposure under test would remove from the map
+whatever signal the analysis is looking for.
+
+```{r cvd-smoothing-diag}
+tibble::tibble(
+  Quantity = c(
+    "Mixing parameter rho (share of residual variation that is spatially structured)",
+    "Range of raw SMR", "Range of smoothed RR",
+    "Max R-hat", "Min effective sample size"),
+  Value = c(
+    fmt_num(diag_cvd_bym2$rho_mean, 3),
+    sprintf("%s to %s", fmt_num(min(g$cvd_smr, na.rm = TRUE), 2),
+            fmt_num(max(g$cvd_smr, na.rm = TRUE), 2)),
+    sprintf("%s to %s", fmt_num(min(aug_cvd$bym2_rr, na.rm = TRUE), 2),
+            fmt_num(max(aug_cvd$bym2_rr, na.rm = TRUE), 2)),
+    fmt_num(diag_cvd_bym2$rhat_max, 4),
+    fmt_n(diag_cvd_bym2$neff_min))
+) |>
+  kable(caption = "How much the smoothing did. A smoothed range much narrower than the raw range means most of the raw variation was noise; a low rho means little of what remains is spatially structured.")
+```
+
+```{r fig-cvd-exceed, fig.cap="Exceedance probability, cerebrovascular mortality 0-74.", fig.width=7.5, fig.height=5.5}
+plot_exceedance_map(aug_cvd, title = NULL, subtitle = NULL) |>
+  overlay_hubs(stroke_centres)
+```
+
+```{r cvd-exceed-count, results="asis"}
+exc <- sf::st_drop_geometry(aug_cvd)$bym2_exceed
+cat(sprintf(paste0(
+  "\n> %s of %s areal units carry at least an 80%% posterior probability that ",
+  "cerebrovascular mortality runs more than 20%% above expectation, and %s reach ",
+  "95%%.\n\n"),
+  fmt_n(sum(exc > 0.80, na.rm = TRUE)), fmt_n(length(exc)),
+  fmt_n(sum(exc > 0.95, na.rm = TRUE))))
 ```
 
 Thrombectomy acts on cerebral infarction (I63) alone; neurosurgical and neurocritical care act on the haemorrhagic subtypes
@@ -180,34 +259,12 @@ cat(sprintf(paste0(
   "touch %s of this outcome (%s I63 x ~%.0f%% large-vessel occlusion x ~%.0f%% ",
   "presenting in window). A 30%% mortality reduction in that subset would move ",
   "total cerebrovascular mortality by %s - far below anything this design can ",
-  "resolve. Adding the neurosurgical channel (%s haemorrhagic) raises the ",
-  "reachable fraction to about %s, which is the same order as the credible ",
-  "interval in §5.5. **This is the argument for reframing the exposure rather ",
-  "than narrowing the outcome.**\n\n"),
+  "resolve.\n\n"),
   fmt_pct(100*thromb), fmt_pct(100*i63/tot), 100*lvo, 100*win,
-  fmt_pct(100*thromb*0.30), fmt_pct(100*haem/tot),
-  fmt_pct(100*(thromb + haem/tot))))
+  fmt_pct(100*thromb*0.30)))
 ```
 
-```{r cvd-counts}
-tibble::tibble(
-  Quantity = c("Cerebrovascular deaths, 0-74, 2022-2024",
-               "Deaths per year",
-               "Areal units with zero deaths",
-               "Median expected count per area",
-               "Areal units with expected count < 5"),
-  Value = c(
-    fmt_n(sum(g$cvd_obs)),
-    fmt_n(sum(g$cvd_obs) / 3),
-    fmt_n(sum(g$cvd_obs == 0)),
-    fmt_num(median(g$cvd_exp), 1),
-    fmt_n(sum(g$cvd_exp < 5))
-  )
-) |>
-  kable(caption = "The tracer outcome. Sparse counts widen every interval that follows.")
-```
-
-```{r fig-raw, fig.cap="Cerebrovascular SMR against travel time to the nearest hub. Point size is the expected count, so the large points are the areas the model actually learns from."}
+```{r fig-raw, fig.cap="Cerebrovascular SMR against travel time to the nearest hub. Point size is the expected count, so the large points are the areas the model actually learns from.", fig.width=7.5, fig.height=4.5}
 plot_tracer_raw(smr_geo_tracer, "t_hub_mean")
 ```
 
@@ -216,53 +273,11 @@ ec <- exposure_contrast(smr_geo_full, C = C_matrix)
 hub <- ec[ec$measure == "t_hub_mean", ]
 
 cat(sprintf(
-  paste0("> The exposure has a Moran's I of %s, i.e. it is a smooth spatial ",
-         "surface. It therefore competes directly with the BYM2 random ",
-         "effect for the same variation — see §5.2.\n\n"),
+  paste0("> The exposure has a Moran's I of %s, i.e. it is a smooth spatial\n",
+         "surface. It therefore competes directly with the BYM2 random\n",
+         "effect for the same variation — see §2.2.\n\n"),
   fmt_num(hub$moran_i, 3))
   )
-
-```
-
-Thus, the original proposition could never show an effect.
-
-## 2.2 Model
-
-A level-II centre is not only a thrombectomy centre. It provides
-neurosurgical and neurocritical care, and that channel acts on
-haemorrhagic stroke (which is the majority of premature
-cerebrovascular deaths here).
-
-Organised stroke-unit care of any level also has better evidence for a
-population mortality effect than thrombectomy specifically, so both
-destination sets are fitted.
-
-```{r exposure-table}
-tracer_exposure_table |>
-  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
-  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
-  kable(col.names = c("Destination set", "Term", "RR per SD", "2.5%", "97.5%",
-                      "ESS", "R-hat"),
-        caption = "Cerebrovascular mortality 0-74 against travel time to two different destination sets.")
-```
-
-The exposure is a smooth spatial surface and so is the BYM2 random
-effect. When two terms describe the same variation, the data cannot say
-which owns it and the covariate coefficient is pulled toward zero
-regardless of whether an effect exists.
-
-**Watch the effective sample size**, not just the interval. A low ESS
-concentrated on the exposure coefficient, while the intercept samples
-freely, is the signature of a covariate trading off against the random
-effect.
-
-```{r engine-table}
-tracer_engine_table |>
-  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
-  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
-  kable(col.names = c("Specification", "Term", "RR per SD", "2.5%", "97.5%",
-                      "ESS", "R-hat"),
-        caption = "The same tracer under three treatments of spatial structure.")
 ```
 
 
@@ -284,7 +299,9 @@ control_table |>
         caption = "Tracer and controls. The verdict column checks direction against the pre-specified expectation, not merely whether the interval clears the null.")
 ```
 
-# 3. Ischemi all-age outcomes
+Thus, the original proposition could never show an effect.
+
+# 3. Ischemic all-age outcomes
 
 The 75-year ceiling belongs to the OECD/Eurostat avoidability
 definition, not to the clinical question. An ischaemic stroke at 90 is
@@ -308,19 +325,52 @@ outcome_feasibility_table |>
         caption = "Feasibility of each candidate outcome at 279-area resolution. Compare against the 0-74 avoidable cerebrovascular outcome, which has 851 deaths.")
 ```
 
-## 3.1 Model
+## 3.1 Does travel time predict risk?
+
+
+```{r i63-engine-table}
+i63_engine_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  kable(col.names = c("Specification", "Term", "RR per SD", "2.5%", "97.5%",
+                      "ESS", "R-hat"),
+        caption = "I63, all ages, against travel time to the nearest thrombectomy hub. Compare row for row with the cerebrovascular 0-74 table in §2.2.")
+```
+
+```{r i63-engine-verdict, results="asis"}
+te <- i63_engine_table
+g_est <- te$estimate[grepl("GLM", te$model)]
+b_est <- te$estimate[te$model == "BYM2"]
+
+if (length(g_est) && length(b_est)) {
+  cat(if (abs(log(g_est)) > 2 * abs(log(b_est)))
+    paste0("\n> The association is substantially larger without the spatial ",
+           "term. That is an identification result rather than a substantive ",
+           "one: the BYM2 random effect is absorbing the travel-time gradient, ",
+           "and neither estimate should be read as the effect of access.\n\n")
+  else if (abs(log(b_est)) < 0.02 && abs(log(g_est)) < 0.02)
+    paste0("\n> Both specifications are null. Removing the age ceiling has not ",
+           "produced an association that the 0\u201374 outcome was hiding, so ",
+           "the age restriction was not what was suppressing the signal.\n\n")
+  else
+    paste0("\n> The estimate is stable across specifications, so it is not an ",
+           "artefact of the spatial term competing with the exposure.\n\n"))
+}
+```
 
 ```{r allage-table}
 allage_table |>
+  filter(!grepl("centre", model)) |>
   mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
   select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
   kable(col.names = c("Outcome ~ exposure", "Term", "RR per SD", "2.5%",
                       "97.5%", "ESS", "R-hat"),
-        caption = "All-age outcomes. Read alongside the feasibility verdict above: a tight interval on an unmodellable outcome is the prior speaking.")
+        caption = "All-age outcomes under BYM2. Read alongside the feasibility verdict above: a tight interval on an unmodellable outcome is the prior speaking.")
 ```
 
 ```{r allage-diag}
 allage_diagnostics |>
+  filter(!grepl("centre", model)) |>
   mutate(across(c(rhat_max, rho), \(x) fmt_num(x, 3)),
          pct_divergent = fmt_pct(pct_divergent)) |>
   select(model, rhat_max, ess_min, n_divergent, pct_divergent, rho) |>
@@ -329,9 +379,9 @@ allage_diagnostics |>
         caption = "Convergence for the all-age models.")
 ```
 
-## 3.2 Maps
+## 3.2 Where is the risk? Descriptive surfaces
 
-```{r fig-i63-map, fig.cap="I63 (cerebral infarction) SMR, all ages, with thrombectomy hubs overlaid."}
+```{r fig-i63-map, fig.cap="I63 (cerebral infarction) SMR, all ages, raw (unsmoothed), with thrombectomy hubs overlaid.", fig.width=7.5, fig.height=5.5}
 gi <- sf::st_as_sf(smr_geo_allage)
 ggplot(gi) +
   geom_sf(aes(fill = i63_smr), colour = NA) +
@@ -343,7 +393,48 @@ ggplot(gi) +
   theme_atlas(map = TRUE)
 ```
 
-```{r fig-i63-raw, fig.cap="All-age I63 SMR against travel time to the nearest hub."}
+```{r fig-i63-pair, fig.cap="I63 cerebral infarction, all ages: raw against BYM2-smoothed, shared scale.", fig.width=11, fig.height=5.2}
+p_raw_i63 <- plot_smr_map(gi, value = "i63_smr", title = NULL, subtitle = NULL,
+                          caption = NULL) |> overlay_hubs(stroke_centres)
+p_bym_i63 <- plot_smr_map(aug_i63, value = "bym2_rr", title = NULL,
+                          subtitle = NULL, caption = NULL) |>
+  overlay_hubs(stroke_centres)
+
+map_pair(p_raw_i63, p_bym_i63,
+         titles = c("Raw SMR (observed / expected)",
+                    "BYM2-smoothed relative risk"))
+```
+
+Posterior probability that all-age I63 relative risk exceeds 1.20.
+
+```{r fig-i63-exceed, fig.cap="Exceedance probability, I63 all ages.", fig.width=7.5, fig.height=5.5}
+plot_exceedance_map(aug_i63, title = NULL, subtitle = NULL) |>
+  overlay_hubs(stroke_centres)
+```
+
+### Haemorrhagic stroke, the other channel
+
+
+```{r fig-haem, fig.cap="Haemorrhagic stroke (I60-I62) under 75: smoothed relative risk and exceedance probability.", fig.width=11, fig.height=5.2}
+p_haem_rr  <- plot_smr_map(aug_haem, value = "bym2_rr", title = NULL,
+                           subtitle = NULL, caption = NULL) |>
+  overlay_hubs(stroke_centres)
+p_haem_exc <- plot_exceedance_map(aug_haem, title = NULL, subtitle = NULL) |>
+  overlay_hubs(stroke_centres)
+
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  patchwork::wrap_plots(
+    p_haem_rr  + ggplot2::ggtitle("Smoothed relative risk"),
+    p_haem_exc + ggplot2::ggtitle("P(RR > 1.20)"),
+    nrow = 1
+  ) & ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold", hjust = 0.5,
+                                       size = ggplot2::rel(0.95)),
+    legend.position = "bottom")
+} else p_haem_rr
+```
+
+```{r fig-i63-raw, fig.cap="All-age I63 SMR against travel time to the nearest hub.", fig.width=7.5, fig.height=4.5}
 d <- sf::st_drop_geometry(smr_geo_allage)
 ggplot(d, aes(x = t_hub_mean, y = i63_smr)) +
   geom_hline(yintercept = 1, linetype = "22", colour = "grey45") +
@@ -362,13 +453,12 @@ ggplot(d, aes(x = t_hub_mean, y = i63_smr)) +
 # 4. Interpretation
 
 A null tracer coefficient is consistent with at least four different
-states of the world, and this design cannot fully separate them. State
-which one you believe, and why, rather than reporting "no association".
+states of the world.
 
 1.  **No effect.** Access to thrombectomy does not affect
     population-level cerebrovascular mortality in this territory.
 2.  **No contrast.** There is an effect, but every area is close enough
-    that the study contains no exposure gradient to detect it with. §4
+    that the study contains no exposure gradient to detect it with. §1.2
     answers this directly.
 3.  **Wrong outcome.** Mortality is incidence times case fatality.
     Access can only move case fatality, and only for the
@@ -377,29 +467,4 @@ which one you believe, and why, rather than reporting "no association".
     deaths before contact with services, and long-run sequelae all sit
     in the numerator and dilute the signal toward zero.
 4.  **Not identified.** The exposure and the spatial random effect
-    describe the same smooth variation. §5.2 addresses this.
-
-```{r nco-reading, results="asis"}
-tr  <- control_table[control_table$role == "Tracer", ]
-nco <- control_table[control_table$role == "Negative control outcome", ]
-
-if (nrow(tr) && nrow(nco)) {
-  cat(sprintf(
-    paste0("\2n**The negative control.** Travel time is associated with ",
-           "all-cancer mortality at RR %s (%s to %s), against %s (%s to %s) ",
-           "for the tracer. %s\n\n"),
-    fmt_num(nco$estimate, 3), fmt_num(nco$ci_low, 3), fmt_num(nco$ci_high, 3),
-    fmt_num(tr$estimate, 3), fmt_num(tr$ci_low, 3), fmt_num(tr$ci_high, 3),
-    if (abs(log(nco$estimate)) > abs(log(tr$estimate)))
-      paste0("The negative control association is **larger** than the tracer ",
-             "association. Whatever travel time is measuring here, it is not ",
-             "specific to time-critical care: it tracks something about area ",
-             "character that also predicts cancer mortality. The tracer null ",
-             "cannot be read as evidence about the stroke pathway until this ",
-             "is explained.")
-    else
-      paste0("The negative control is smaller than the tracer association, ",
-             "which is the pattern the design was built to detect.")
-  ))
-}
-```
+    describe the same smooth variation. §2.2 addresses this.

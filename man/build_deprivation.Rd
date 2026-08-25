@@ -4,7 +4,7 @@
 \alias{build_deprivation}
 \title{Build the deprivation index at modelling-area resolution}
 \usage{
-build_deprivation(census, xwalk, sez_key = NULL)
+build_deprivation(census, xwalk, sez_key = NULL, vintage = c("2023", "2011"))
 }
 \arguments{
 \item{census}{Section-level table from \code{\link[=import_census_2023]{import_census_2023()}}, carrying a
@@ -13,6 +13,13 @@ section identifier and \code{PROCOM}.}
 \item{xwalk}{Section-to-area crosswalk from \code{\link[=build_section_area_xwalk]{build_section_area_xwalk()}}.}
 
 \item{sez_key}{Section identifier column in \code{census}. Detected when \code{NULL}.}
+
+\item{vintage}{Census release the variable codes belong to: \code{"2023"} (the
+permanent census) or \code{"2011"} (the general census). The indicators, the
+guards, the clamping and the two-stage standardisation are identical
+across vintages; only the source variable codes differ. Running both years
+through one function is what makes a temporal comparison a statement about
+the territory rather than about two implementations.}
 }
 \value{
 A tibble, one row per modelling area: \code{area}, \code{population}, the four
