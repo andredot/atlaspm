@@ -212,12 +212,26 @@ fit_controls <- function(geo, C, scale_factor,
 #'   the `tracer_obs` / `tracer_exp` pair given to [fit_controls()]. Hardcoding
 #'   it here once meant the table kept saying "cerebrovascular mortality" after
 #'   the reference outcome changed.
+#' @param exposure Term name of the exposure under test. This is the *only* row
+#'   in the tracer and negative-control-outcome arms that the pre-specification
+#'   speaks to; the remaining rows in those arms are adjustment covariates and
+#'   are deliberately left unjudged.
+#' @param deprivation Term name of the positive control's exposure. Same logic:
+#'   the "should be present" expectation was written for deprivation against
+#'   lifestyle-preventable mortality, not for every covariate in that fit.
+#' @param nce_exposure Term name of the negative control exposure, or `NULL`
+#'   while T3 is unfitted.
 #'
-#' @return A tibble: `role`, `outcome`, `exposure`, `rr`, `ci_low`, `ci_high`,
-#'   `expectation`.
+#' @return A tibble: `role`, `outcome`, `term`, `label`, `estimate`, `ci_low`,
+#'   `ci_high`, `crosses_null`, `scored`, `verdict`, `expectation`. `scored` is
+#'   `TRUE` only for the designated exposure in each arm; `verdict` is
+#'   meaningful only on those rows.
 #' @export
 collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975),
-                             tracer_outcome = "I63 cerebral infarction, all ages") {
+                             tracer_outcome = "I63 cerebral infarction, all ages",
+                             exposure     = "t_hub_mean_z",
+                             deprivation  = "di_score_z",
+                             nce_exposure = NULL) {
 
   roles <- c(
     tracer      = "Tracer",
@@ -259,7 +273,29 @@ collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975),
   dir_obs      <- sign(log(coefs[["estimate"]]))
   want         <- unname(expected_dir[coefs[["model"]]])
 
+  # Each arm makes a claim about ONE coefficient - the exposure it was built to
+  # interrogate. The others in the same fit are the adjustment set, and judging
+  # them against the arm's expectation is a category error: deprivation is
+  # supposed to predict all-cancer mortality, so scoring it against the
+  # negative control's "should be null" produces a FAILS that says nothing
+  # about the control. Rows outside the designated term are marked not
+  # applicable rather than silently dropped, so the reader can see that the
+  # adjustment set was reported but deliberately not scored.
+  expected_term <- c(
+    tracer      = exposure,
+    nc_outcome  = exposure,
+    nc_exposure = if (is.null(nce_exposure)) NA_character_ else nce_exposure,
+    positive    = deprivation
+  )
+  is_target <- !is.na(coefs[["term"]]) &
+    coefs[["term"]] == unname(expected_term[coefs[["model"]]])
+  is_target[is.na(is_target)] <- FALSE
+
+  coefs[["scored"]] <- is_target
+  want[!is_target]  <- NA
+
   coefs[["verdict"]] <- dplyr::case_when(
+    !is_target                                    ~ "not applicable (adjustment covariate)",
     is.na(want)                                   ~ "no directional prediction",
     want == 0 &  coefs[["crosses_null"]]          ~ "as expected (null)",
     want == 0 & !coefs[["crosses_null"]]          ~ "FAILS: association where none expected",
@@ -280,7 +316,7 @@ collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975),
   }
 
   coefs[, c("role", "outcome", "term", "label", "estimate", "ci_low",
-            "ci_high", "crosses_null", "verdict", "expectation")]
+            "ci_high", "crosses_null", "scored", "verdict", "expectation")]
 }
 
 

@@ -376,7 +376,10 @@ list(
                           refresh      = 0)),
   tar_target(control_table,
              collect_controls(control_fits, labels = TERM_LABELS,
-                              tracer_outcome = "I63 cerebral infarction, all ages")),
+                              tracer_outcome = "I63 cerebral infarction, all ages",
+                              exposure       = STROKE_EXPOSURE,
+                              deprivation    = "di_score_z",
+                              nce_exposure   = NULL)),
   tar_target(control_diagnostics, collect_diagnostics(control_fits)),
   tar_target(stroke_times_table, stroke_time_summary(smr_geo_full)),
 

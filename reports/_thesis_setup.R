@@ -159,13 +159,52 @@ pareto_sentence <- function(pa, model = "M5") {
                           "whole study area and no observation exerts undue ",
                           "influence on the comparison."), model))
   }
+  med_flagged <- stats::median(pa[["expected"]], na.rm = TRUE)
+  ref         <- attr(pa, "median_expected_all")
+
+  # The direction of this comparison used to be asserted rather than computed,
+  # and it was asserted the wrong way round. In a BYM2 the high-k units are the
+  # high-count ones: an area with a large expected count effectively determines
+  # its own random effect, so removing it moves the posterior a long way and
+  # the importance weights degenerate. That is a property of the hierarchy, not
+  # a defect in the data.
+  where <- if (is.null(ref) || is.na(ref)) {
+    "so the approximation is least reliable in those units"
+  } else if (med_flagged > ref) {
+    sprintf(paste0("against a study-wide median of %s, so the flagged units ",
+                   "are the largest rather than the sparsest"),
+            fmt_num(ref, 1))
+  } else {
+    sprintf(paste0("against a study-wide median of %s, so the flagged units ",
+                   "are the sparsest"),
+            fmt_num(ref, 1))
+  }
+
   sprintf(paste0("Pareto-k exceeded 0.7 for %d area(s) under %s. Their median ",
-                 "expected count was %s, so these are the sparsest units, ",
-                 "where the leave-one-out approximation is least reliable and ",
-                 "each observation's influence on the fit is correspondingly ",
-                 "greater."),
-          nrow(pa), model,
-          fmt_num(stats::median(pa[["expected"]], na.rm = TRUE), 1))
+                 "expected count was %s, %s. Each of these observations exerts ",
+                 "correspondingly greater influence on the fit, which is where ",
+                 "the leave-one-out approximation degrades."),
+          nrow(pa), model, fmt_num(med_flagged, 1), where)
+}
+
+# A point estimate of "about a quarter" is not a finding when the interval runs
+# from clearly negative to well over half. The old wording ("rather less than
+# half") read the point estimate and ignored the bounds; this reads both.
+variance_verdict <- function(vr) {
+  r <- vr[["reduction"]]
+  if (is.null(r)) return("[NOT COMPUTED]")
+  if (r[["ci_low"]] > 0) {
+    sprintf(paste0("The interval excludes zero, so the measured determinants ",
+                   "account for a real but minority share of the geographical ",
+                   "variation in avoidable death."))
+  } else {
+    paste0("The interval spans zero, so while the point estimate attributes ",
+           "roughly a quarter of the geographical variation to the measured ",
+           "determinants, the data are also consistent with their accounting ",
+           "for none of it. The between-area variation in avoidable mortality ",
+           "is largely unexplained by deprivation, air quality and primary ",
+           "care capacity taken together.")
+  }
 }
 
 rr_range <- function(aug, value = "bym2_rr") {
@@ -214,12 +253,34 @@ mechanism_sentence <- function(mt) {
               paste(sprintf("%s (%d areas)", with_excess[["mechanism"]],
                             with_excess[["n_exceed"]]), collapse = "; "))
     else ". ",
-    sprintf("The mixing parameter ranged from %s to %s across strata, so the ",
+    sprintf("The mixing parameter ranged from %s to %s across strata. ",
             fmt_num(min(modelled[["rho"]], na.rm = TRUE), 2),
             fmt_num(max(modelled[["rho"]], na.rm = TRUE), 2)),
-    "share of residual variation that is spatially structured differs ",
-    "appreciably by service function."
+    # A range of point estimates is not a difference. rho is weakly identified
+    # at the best of times - separating the ICAR component from iid noise takes
+    # a lot of data - and in strata of a few hundred deaths the posterior is
+    # essentially the prior. Only claim a difference if some pair of intervals
+    # actually fails to overlap.
+    if (.rho_intervals_separate(modelled)) {
+      paste0("The credible intervals do not all overlap, so the share of ",
+             "residual variation that is spatially structured does differ by ",
+             "service function.")
+    } else {
+      paste0("The credible intervals overlap across every pair of strata and ",
+             "span most of the unit interval in the smaller ones, so rho is ",
+             "not identified at this stratum size and the spread of point ",
+             "estimates should not be read as a difference between service ",
+             "functions.")
+    }
   )
+}
+
+# TRUE when at least one pair of rho credible intervals is disjoint.
+.rho_intervals_separate <- function(modelled) {
+  lo <- modelled[["rho_low"]]
+  hi <- modelled[["rho_high"]]
+  if (is.null(lo) || is.null(hi) || length(lo) < 2) return(FALSE)
+  any(outer(lo, hi, ">") | outer(hi, lo, "<"), na.rm = TRUE)
 }
 
 stroke_time_sentence <- function(st) {

@@ -132,6 +132,36 @@ numbers_card(desc_numbers, study_area_summary, excess, variance_reduction,
 100%.
 :::
 
+::: {.callout-important collapse="true"}
+## Reading notes for §1
+
+- **External causes are absent, and this is the study's largest structural
+  limitation.** Transport accidents, falls, self-harm and assault are a
+  substantial share of preventable mortality on the published OECD/Eurostat
+  list and are not carried by the ReNCaM register. The consequence is
+  operational, not just statistical: the *Environment and Safety* layer reduces
+  to occupational respiratory disease
+  (`r fmt_n(desc_numbers$environment$n)`, `r fmt_pct(desc_numbers$environment$pct)`)
+  and the *Mental Health* layer contains no self-harm
+  (`r fmt_n(desc_numbers$mental_health$n)`, `r fmt_pct(desc_numbers$mental_health$pct)`).
+  Neither can support the UOC mapping the February proposal assigned them.
+  This belongs in the Discussion as a named limitation.
+- **Table 1's cause-group-by-category structure is deterministic.** Circulatory
+  disease is almost entirely "both" because the OECD list splits IHD,
+  cerebrovascular, hypertensive and aortic aneurysm 50/50. Nothing was
+  discovered there.
+- **The sex reversal is substantive and is worth a sentence.** Preventable-only
+  skews male (smoking, alcohol, occupational exposure); treatable-only skews
+  female, because breast and cervical cancer sit on the treatable side.
+- **Verify the count of split causes** quoted in the prose against
+  `avoidable_lookup_v3.csv`. It is an interpolated scalar and the published list
+  carries eight 50/50 causes, not seven; if one has no deaths in this extract,
+  say so rather than letting the number look like a transcription error.
+- **COVID-19 in a 2022–24 window is post-vaccine COVID**, and its assignment to
+  the preventable list is provisional in the OECD classification. One
+  acknowledging sentence.
+:::
+
 ```{r avoidability}
 desc_numbers$avoidability |>
   mutate(pct = fmt_pct(pct)) |>
@@ -189,9 +219,14 @@ desc_numbers$by_mechanism |>
 > Moran's I on the crude standardised ratios was
 > `r fmt_num(moran_crude$statistic, 3)`
 > (`r fmt_p(moran_crude$p_value)`, `r fmt_n(moran_crude$n_sim)` permutations),
-> indicating that risk in neighbouring areas was more similar than risk in
-> distant areas and supporting a specification incorporating spatially
-> structured variation.
+> which does not on its own establish spatial structure: crude ratios in areas
+> with expected counts as low as
+> `r fmt_num(min_of(covariate_table, "Expected deaths"), 2)` are dominated by
+> Poisson noise, and a global statistic computed on them has little power. The
+> case for a spatially structured specification rests instead on the residuals
+> of the unadjusted model, where Moran's I is
+> `r by_model(moran_residual, "M1", "statistic")`
+> (`r by_model(moran_residual, "M1", "p_value", fmt = fmt_p)`) — see §3.
 >
 > The Italian Deprivation Index ranged from
 > `r rng(covariate_table, "Deprivation Index")` in summed z-score units, with a
@@ -235,6 +270,35 @@ desc_numbers$by_mechanism |>
 > `r ifelse(cond_independence$p_value > 0.05, "was not contradicted", "was contradicted")`.
 > Note that surviving one testable implication is weak evidence for a graph;
 > failing one would have been strong evidence against it.
+
+::: {.callout-note collapse="true"}
+## Reading notes for §2
+
+- **Every covariate is a partial measurement of one latent thing.** Travel time
+  to hub against NO₂ is
+  `r fmt_num(cor_between(covariate_correlations, "t_hub_mean", "no2"), 3)`;
+  t_hub against t_centre
+  `r fmt_num(cor_between(covariate_correlations, "t_hub_mean", "t_centre_mean"), 3)`;
+  IVSM against t_centre
+  `r fmt_num(cor_between(covariate_correlations, "ivsm", "t_centre_mean"), 3)`.
+  That common factor is urban–rural position, and it is why §4.4's NO₂ and
+  primary-care coefficients move between M2 and M5, and why §6.3 needs a
+  specification ladder rather than a single fit.
+- **The deprivation index is right-skewed with one extreme value**
+  (max `r max_of(covariate_table, "Deprivation Index")` against a median of
+  `r median_of(covariate_table, "Deprivation Index")`). The headline
+  coefficient is per SD, so a single area can move it. Report the winsorised
+  refit alongside.
+- **The change of resolution is the methodological gain, not a technical
+  detail.** Within-Milan SD of the deprivation index is
+  `r fmt_num(deprivation_resolution$nil_sd_area, 3)` against an overall study
+  SD of `r fmt_num(deprivation_resolution$overall_sd, 3)`. Under the previous
+  municipality-level construction that within-Milan figure was exactly zero.
+- **The primary-care result is a finding, not a nuisance.** A rank correlation
+  with deprivation of
+  `r fmt_num(cor_between(covariate_correlations, "gp_density", "di_score"), 2)`
+  means the inverse care law is not operating in this territory.
+:::
 
 ## Covariate summary
 
@@ -326,6 +390,37 @@ scatter_smr_gp
 > `r moran_verdict(moran_residual, "M5")`
 > absorbed the structure present in the crude ratios.
 
+::: {.callout-note collapse="true"}
+## Reading notes for §3
+
+- **Compare `elpd diff` against `SE diff`, never against `SE`.** The individual
+  standard errors are computed on 279 pointwise terms; the difference is
+  computed on *paired* pointwise differences and is much smaller. M4 and M5
+  each carry an SE near
+  `r fmt_num(tbl_loo$se_elpd[tbl_loo$model == "M4"], 1)` while the difference
+  between them has an SE of
+  `r fmt_num(abs(tbl_loo$se_diff[tbl_loo$model == "M5"]), 1)`.
+- **The spatial term does more predictive work than the covariates.**
+  M1 → M2 (covariates only) and M1 → M3 (spatial only) are the two increments
+  to read off the table; the second is roughly twice the first. M4 → M5, which
+  adds NO₂ and primary care, is negative.
+- **M4 wins on LOO but M5 is the reported model.** They are indistinguishable
+  predictively, and M5 is the specification that answers the substantive
+  question — how much of the geography the measured determinants account for.
+  Prediction and estimation are not the same criterion, and the choice is made
+  on the second.
+- **M3 and M4 being indistinguishable does not weaken the deprivation
+  coefficient.** The BYM2 field can reproduce a smooth covariate's spatial
+  pattern for prediction while the coefficient remains identified by
+  within-neighbourhood contrast. See §4.4, where the estimate is stable to
+  three decimals across five specifications.
+- **The residual Moran's I sequence is the argument for BYM2.** M1 → M2 shows
+  that covariates alone do not remove the spatial structure; M2 → M3 shows that
+  the spatial term does.
+- **Mild over-smoothing across M3–M7** (residual I slightly negative) is within
+  noise at this n. M6 is the most affected.
+:::
+
 ```{r diagnostics-table}
 model_diagnostics |>
   mutate(across(c(rhat_max, ebfmi_min, rho), \(x) fmt_num(x, 3)),
@@ -382,13 +477,16 @@ if (nrow(pareto_audit)) {
 > pollution and primary care capacity jointly predict (95% credible interval
 > `r fmt_num(excess$total$ci_low, 0)` to `r fmt_num(excess$total$ci_high, 0)`),
 > which is `r fmt_pct(excess$total$pct_of_total)` of overall avoidable
-> mortality. Adding the covariates to the unadjusted model reduced between-area
+> mortality. This sum is a calibration check rather than a result: residual
+> excess summed over all areas is centred on zero by construction in a
+> well-fitted model, and it is the distribution across areas, not the total,
+> that carries information.
+>
+> Adding the covariates to the unadjusted model reduced between-area
 > variance by `r fmt_pct(variance_reduction$reduction$pct_reduction)`
 > (95% CrI `r fmt_pct(variance_reduction$reduction$ci_low)` to
-> `r fmt_pct(variance_reduction$reduction$ci_high)`), so the measured
-> determinants account for
-> `r ifelse(variance_reduction$reduction$pct_reduction < 50, "rather less than half", "most")`
-> of the geographical variation in avoidable death.
+> `r fmt_pct(variance_reduction$reduction$ci_high)`).
+> `r variance_verdict(variance_reduction)`
 >
 > `r excess$n_flagged` areas had a posterior probability above
 > `r excess$prob_cutoff` that their residual relative risk exceeded
@@ -410,8 +508,11 @@ excess$per_area |>
          p_exceed = fmt_num(p_exceed, 2)) |>
   select(area, observed, expected, excess, excess_low, excess_high,
          rr_resid, p_exceed) |>
+  # Interpolated, not typed. This header said 1.20 for several runs while the
+  # pipeline was flagging on 1.10, because the number was a literal in a string.
   kable(col.names = c("Area", "Observed", "Expected", "Excess/yr", "2.5%",
-                      "97.5%", "Residual RR", "P(RR > 1.20)"),
+                      "97.5%", "Residual RR",
+                      sprintf("P(RR > %.2f)", excess$threshold)),
         caption = "Areas flagged as showing residual excess under M5.")
 ```
 
@@ -432,18 +533,39 @@ fig_excess_flagged
 > distributed risk; they reflect the model's expected behaviour given lower
 > counts, which produce broader posteriors.
 
-::: {.callout-important}
-The draft names two clusters — "the Magenta–Legnano axis" and "the Lodi
-extension". Check them against the flagged-area table above before keeping
-those sentences. They were written from an earlier run and are not currently
-generated from the data.
+::: {.callout-note collapse="true"}
+## Reading notes for §4
+
+- **The contrast between §4.1 and §4.2 is the result.**
+  `r n_exceeding(aug_M3, 0.80)` areas exceed the cutoff on the unadjusted M3
+  surface; `r excess$n_flagged` survive on the M5 residual surface. Deprivation
+  accounts for the difference. The geography of avoidable death in this
+  territory is largely the geography of deprivation, and only the surviving
+  area is doing something the covariates cannot explain.
+- **Named clusters must come from the flagged-area table, not from memory.**
+  Two cluster names carried over from an earlier run were removed here; any
+  geography in the thesis text should be re-derived from the table above and
+  the area codes resolved to names.
+- **The residual-excess total is a calibration check**, not a finding of "no
+  excess mortality". See the wording in §4.1.
+- **Deprivation is the single most robust estimate in the study.** It sits at
+  `r fmt_num(min(model_coefficients$estimate[model_coefficients$term == "di_score_z"]), 3)`–`r fmt_num(max(model_coefficients$estimate[model_coefficients$term == "di_score_z"]), 3)`
+  per SD across every specification in §4.4 — two spatial parameterisations and
+  two pollutants — and does not move.
+- **NO₂ and primary care are significant in M2 and null everywhere else, and
+  both point below 1.** M2 carries no spatial term, so in that fit the two are
+  proxying urban position, which in this territory is confounded with
+  affluence and service supply. Once BYM2 absorbs position they have nothing
+  left to explain. A protective coefficient for nitrogen dioxide should be read
+  as a confounding signature, not as an effect.
 :::
 
 ```{r fig-rr, fig.cap="BYM2-smoothed relative risk, M3 (no covariates)."}
 fig_rr_map
 ```
 
-```{r fig-exceedance, fig.cap="Exceedance probability that relative risk exceeds 1.20, M3."}
+```{r fig-exceedance}
+#| fig.cap: !expr sprintf("Exceedance probability that relative risk exceeds %.2f, M3.", attr(aug_M3, "bym2_exceed_threshold") %||% excess$threshold)
 fig_exceedance
 ```
 
@@ -487,6 +609,32 @@ fig_forest
 
 > The smoothed risk surfaces for all seven strata are shown in Figure 5.1.
 > `r mechanism_sentence(mechanism_table)`
+
+::: {.callout-note collapse="true"}
+## Reading notes for §5
+
+- **Five strata flag no areas, and that is power, not safety.** Screening
+  carries `r fmt_n(mechanism_table$deaths[mechanism_table$mechanism == "Screening"])`
+  deaths and Gender and Reproductive Health
+  `r fmt_n(mechanism_table$deaths[mechanism_table$mechanism == "Gender and Reproductive Health"])`,
+  spread across `r nrow(sf::st_drop_geometry(aug_M3))` areas. Empty rows should
+  not be read as reassuring findings.
+- **rho is not identified in the smaller strata.** The intervals span most of
+  the unit interval and overlap across every pair; the spread of point
+  estimates is prior, not signal.
+- **The two well-powered surfaces are largely the same map.** Lifestyle and
+  NCDs against Tertiary prevention rank at
+  `r fmt_num(mechanism_concordance$long$rho[1], 3)`. The proposal's premise was that
+  each thematic layer hands a different geography to a different UOC; on this
+  evidence the two largest layers hand nearly the same geography to two
+  different UOCs. The defensible reading is that the same neighbourhoods need
+  both primary prevention and better clinical management — an argument for
+  coordinated action rather than parallel vertical programmes — but it has to
+  be argued rather than passed over.
+- **Low concordance among the small strata is not evidence of distinct
+  geography.** Where at least one surface is noise, two surfaces are
+  uncorrelated by construction.
+:::
 
 ```{r mechanism-table}
 mechanism_table |>
@@ -705,9 +853,9 @@ control_table |>
 
 ```{r control-verdicts}
 control_table |>
-  select(role, outcome, verdict) |>
-  kable(col.names = c("Role", "Outcome", "Verdict"),
-        caption = "The verdict checks direction against the pre-specified expectation, not merely whether the interval clears the null.")
+  select(role, outcome, label, verdict) |>
+  kable(col.names = c("Role", "Outcome", "Term", "Verdict"),
+        caption = "The verdict checks direction against the pre-specified expectation, not merely whether the interval clears the null. Only the designated exposure in each arm is scored: the adjustment covariates are reported for transparency but the arm's expectation was never written about them.")
 ```
 
 ```{r fig-controls, fig.cap="Tracer and control coefficients, relative risk per standard deviation.", fig.height=6}
@@ -726,30 +874,93 @@ control_diagnostics |>
 
 ## 6.6 Interpretation
 
-A null tracer coefficient is consistent with at least four different states of
-the world, and the sections above are what distinguishes them.
+The tracer coefficient is **not** null. Travel time to the nearest thrombectomy
+hub carries a relative risk of
+`r fmt_ci(control_table$estimate[control_table$role == "Tracer" & control_table$scored], control_table$ci_low[control_table$role == "Tracer" & control_table$scored], control_table$ci_high[control_table$role == "Tracer" & control_table$scored], 3)`
+per standard deviation on all-age I63 mortality, the negative control outcome
+is null, and the positive control behaves as pre-specified. This section
+therefore enumerates what a *positive* coefficient of this size is consistent
+with, which is not the same list as the one a null would have required.
 
-1. **No effect.** Access to thrombectomy does not affect population-level
-   cerebral-infarction mortality in this territory.
-2. **No contrast.** There is an effect, but every area is close enough that the
-   study contains no exposure gradient to detect it with. §6.1 answers this
-   directly.
-3. **Wrong outcome.** Mortality is incidence times case fatality. Access can
-   only move case fatality, and only for the thrombectomy-eligible subset —
-   ischaemic strokes, large-vessel occlusion, presenting in window. Moving to
-   all-age I63 removes two of the three dilutions the original 0–74
-   cerebrovascular outcome carried; it does not remove the third. §6.2
-   quantifies what is left. Exposure measurement compounds it: routed time from
-   a population-weighted origin to the nearest hub is not the time a patient
-   actually takes, which includes dispatch, bypass protocols and drip-and-ship
-   transfers. That misclassification is non-differential, so it attenuates.
-4. **Not identified.** This one is now partly designed out rather than merely
-   noted. The reference model does not carry a spatial random effect, precisely
-   because that term and the exposure describe the same smooth variation; the
-   BYM2 and ESF rungs of §6.3 quantify how much is lost when it is included.
-   What remains is the weaker version: the three measured covariates are
-   proxies for the urban–rural gradient, not the gradient itself, so residual
-   confounding on that path cannot be excluded.
+**The magnitude is the problem, and §6.2 is where it bites.** One standard
+deviation of the exposure is roughly
+`r fmt_num(.cov_row(stroke_times_table, "Nearest thrombectomy hub (level II), minutes")[["sd"]], 1)`
+minutes. §6.2 establishes, before any model was fitted, that thrombectomy could
+touch on the order of 10% of the reference outcome, so even a large reduction
+in case fatality within the eligible subset moves total I63 mortality by well
+under one per cent. An estimated effect of this magnitude is therefore an order
+of magnitude too large to be an access-to-thrombectomy effect. Whatever the
+coefficient is measuring, the pre-specified mechanism cannot generate it.
+
+Three explanations remain, in descending order of how well the design
+constrains them.
+
+1. **Residual confounding by urban–rural position.** The leading candidate.
+   §6.3's adjustment set is three measured children of a latent gradient, not
+   the gradient itself, and §2 shows travel time correlating with NO₂ at
+   `r fmt_num(cor_between(covariate_correlations, "t_hub_mean", "no2"), 3)`.
+   The estimate survives all four rungs of the ladder at a similar magnitude,
+   which is consistent with a real association *and* with a confounder the
+   covariates only partly capture — the ladder cannot separate those. The
+   negative control **exposure** (T3) is the test that would, and it has not
+   been fitted; until it is, this explanation cannot be ranked against the
+   others.
+2. **Differential outcome misclassification.** §6.2 records
+   `r fmt_n(stroke_subtypes$deaths[grepl("^I64", stroke_subtypes$subtype)])`
+   deaths coded I64, stroke type not specified, against
+   `r fmt_n(stroke_subtypes$deaths[grepl("^I63", stroke_subtypes$subtype)])`
+   coded I63. Certification specificity varies by certifying hospital, and
+   hospital catchment is a function of the same geography as the exposure. If
+   peripheral areas code proportionally more I63 while central areas default to
+   I64, that alone manufactures a travel-time gradient in I63 mortality with no
+   clinical content. This is directly testable by refitting the reference
+   specification with I64 as the outcome: an opposing gradient there would
+   largely settle it.
+3. **A real access effect operating through the whole time-critical care
+   chain.** Not thrombectomy alone — the arithmetic above rules that out — but
+   dispatch, door-to-needle time, stroke-unit admission and the rest of the
+   pathway, for which travel time to a level-II centre is a proxy. This is the
+   substantively interesting reading and the least well supported: the design
+   was built to interrogate thrombectomy access specifically, and it cannot
+   distinguish this from explanation 1.
+
+Two constraints from earlier sections continue to apply and are worth restating
+because they bound any of the three readings.
+
+- **Exposure misclassification attenuates.** Routed time from a
+  population-weighted origin to the nearest hub is not the time a patient
+  actually takes, which includes dispatch, bypass protocols and drip-and-ship
+  transfers. That error is non-differential with respect to the outcome, so it
+  biases toward the null and the true association under reading 3 would be
+  larger still.
+- **The spatial rungs answer a different question.** The reference model
+  carries no spatial random effect, precisely because that term and the
+  exposure describe the same smooth variation. §6.3's BYM2 and ESF rungs are
+  reported as a bound, not as a correction; note that the point estimate barely
+  moves across them while precision falls, and that the effective sample size
+  collapse is specific to BYM2 and absent under ESF.
+
+::: {.callout-note collapse="true"}
+## Reading notes for §6
+
+- **The outcome change must stay visible.** The original 0–74 cerebrovascular
+  specification returns a null and the revised one does not. The reasoning for
+  the change was settled before any coefficient was read and both are reported;
+  keep it that way in the Methods, because a reader who discovers the switch
+  later will discount everything after it.
+- **§6.2's arithmetic is the strongest paragraph in the chapter** and it argues
+  against the headline result. Present it that way rather than as a
+  feasibility footnote.
+- **Fit T3.** A negative control exposure that tracks urban–rural position with
+  no path to cerebral infarction — travel time to the nearest post office,
+  library or municipal registry office would serve — is a single additional fit
+  on machinery that already exists, and it is the direct test of whether the
+  tracer measures access or area character. Either result is reportable.
+- **Fit I64 as an outcome** for the misclassification test described above.
+- **The control panel passes.** The verdict column previously scored adjustment
+  covariates against each arm's expectation and produced four spurious
+  failures; the designated exposure in each arm is now the only row scored.
+:::
 
 ---
 
