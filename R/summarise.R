@@ -307,8 +307,15 @@ pareto_k_summary <- function(comparison, geo, model = NULL, k_threshold = 0.7) {
     population = if ("population" %in% names(tab)) tab[["population"]] else NA_real_
   )
 
+  # The reporting layer needs the reference point, not just the flagged rows:
+  # "median expected 109" is only interpretable next to the study-wide median.
+  # Carrying it as an attribute keeps the table shape unchanged.
+  med_all <- stats::median(out[["expected"]], na.rm = TRUE)
+
   out <- out[out[["pareto_k"]] > k_threshold, , drop = FALSE]
-  out[order(out[["expected"]]), , drop = FALSE]
+  out <- out[order(out[["expected"]]), , drop = FALSE]
+  attr(out, "median_expected_all") <- med_all
+  out
 }
 
 

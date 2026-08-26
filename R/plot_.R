@@ -34,18 +34,19 @@
 #' @export
 plot_smr_map <- function(smr,
                          value    = "total_smr",
-                         breaks   = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+                         breaks   = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
                          title    = "Avoidable mortality by area",
                          subtitle = "Indirectly standardised mortality ratio (SMR), all avoidable causes",
                          caption  = "SMR = 1 means deaths match the area-wide age-sex expectation.") {
 
-  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
-  pal <- c(
-    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
-    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
-    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
-    "1.05 \u2013 1.10" = "#dca678",  # warm clay
-    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
+  labels <- smr_break_labels(breaks)
+  pal <- stats::setNames(
+    c("#5a8a7d",   # deep sage  (well below expected)
+      "#a3c4b5",   # soft green
+      "#f2e8d5",   # pale sand  (~ expected)
+      "#dca678",   # warm clay
+      "#b5651d"),  # terracotta (well above expected)
+    labels
   )
 
   # Ensure a properly registered sf: a table whose geometry is a bare sfc
@@ -130,22 +131,25 @@ plot_smr_map <- function(smr,
 #' @export
 plot_smr_facets <- function(smr,
                             cols         = dplyr::matches("^M_.*_smr$"),
-                            breaks       = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+                            breaks       = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
-                            ncol         = 4,
+                            label_fun    = NULL,
+                            wrap         = 24,
+                            ncol         = 3,
                             title    = "Standardised avoidable mortality by mechanism, by area",
                             subtitle = paste("Indirectly age-sex standardised mortality ratio (SMR);",
                                              "1 = deaths match the age-sex expectation"),
                             caption  = "Each panel standardised on the same age-sex schedule; bins shared across panels.") {
 
-  labels <- c("< 0.90", "0.90 \u2013 0.95", "0.95 \u2013 1.05", "1.05 \u2013 1.10", "> 1.10")
-  pal <- c(
-    "< 0.90"        = "#5a8a7d",  # deep sage  (well below expected)
-    "0.90 \u2013 0.95" = "#a3c4b5",  # soft green
-    "0.95 \u2013 1.05" = "#f2e8d5",  # pale sand  (\u2248 expected)
-    "1.05 \u2013 1.10" = "#dca678",  # warm clay
-    "> 1.10"        = "#b5651d"   # terracotta (well above expected)
+  labels <- smr_break_labels(breaks)
+  pal <- stats::setNames(
+    c("#5a8a7d",   # deep sage  (well below expected)
+      "#a3c4b5",   # soft green
+      "#f2e8d5",   # pale sand  (~ expected)
+      "#dca678",   # warm clay
+      "#b5651d"),  # terracotta (well above expected)
+    labels
   )
 
   smr <- sf::st_as_sf(smr)   # defend against a demoted (non-sf) input
@@ -166,8 +170,18 @@ plot_smr_facets <- function(smr,
     tidyr::pivot_longer(-".row", names_to = "category", values_to = "smr") |>
     dplyr::mutate(
       smr_class = cut(.data[["smr"]], breaks = breaks, labels = labels, right = FALSE),
-      category  = stringr::str_remove(.data[["category"]], strip_prefix),
+      # With a label_fun, strip only the SUFFIX and hand the stem over intact:
+      # mechanism_label() needs the "M_" prefix to recognise what it is looking
+      # at. Without one, fall back to the raw stem - which is snake_case and
+      # unreadable in a strip, since janitor::make_clean_names() turns
+      # "Lifestyle and NCDs" into "lifestyle_and_nc_ds".
       category  = stringr::str_remove(.data[["category"]], strip_suffix),
+      category  = if (is.null(label_fun)) {
+        stringr::str_remove(.data[["category"]], strip_prefix)
+      } else {
+        label_fun(.data[["category"]])
+      },
+      category  = stringr::str_wrap(.data[["category"]], width = wrap),
       category  = stringr::str_replace_all(.data[["category"]], "_", " ")
     ) |>
     dplyr::left_join(geom_lookup, by = ".row") |>
@@ -190,7 +204,7 @@ plot_smr_facets <- function(smr,
       plot.subtitle   = ggplot2::element_text(colour = "grey30",
                                               margin = ggplot2::margin(b = 10)),
       plot.caption    = ggplot2::element_text(colour = "grey45", size = 9, hjust = 0),
-      strip.text      = ggplot2::element_text(face = "bold", size = 11,
+      strip.text      = ggplot2::element_text(face = "bold", size = 9,
                                               margin = ggplot2::margin(4, 0, 4, 0)),
       legend.position = "right",
       legend.key.size = ggplot2::unit(0.9, "lines"),
@@ -560,7 +574,9 @@ plot_exceedance_facets <- function(geo,
                                    threshold       = NULL,
                                    strip_prefix    = "^M_",
                                    strip_suffix    = "_bym2_exc$",
-                                   ncol            = 4,
+                                   label_fun       = NULL,
+                                   wrap            = 24,
+                                   ncol            = 3,
                                    title    = "Strategic prioritisation map by mechanism, by area",
                                    subtitle = NULL,
                                    caption  = "Per-mechanism BYM2 exceedance probabilities; tiers shared across panels.",
@@ -612,8 +628,13 @@ plot_exceedance_facets <- function(geo,
     ) |>
     dplyr::mutate(
       mechanism = stringr::str_replace_all(
-        stringr::str_remove(stringr::str_remove(mechanism, strip_prefix),
-                            strip_suffix),
+        {
+          stem <- stringr::str_remove(mechanism, strip_suffix)
+          out  <- if (is.null(label_fun)) {
+            stringr::str_remove(stem, strip_prefix)
+          } else label_fun(stem)
+          stringr::str_wrap(out, width = wrap)
+        },
         "_", " "),
       .tier = factor(
         dplyr::case_when(
@@ -646,10 +667,49 @@ plot_exceedance_facets <- function(geo,
       plot.subtitle   = ggplot2::element_text(colour = "grey30",
                                               margin = ggplot2::margin(b = 10)),
       plot.caption    = ggplot2::element_text(colour = "grey45", size = 9, hjust = 0),
-      strip.text      = ggplot2::element_text(face = "bold", size = 11,
+      strip.text      = ggplot2::element_text(face = "bold", size = 9,
                                               margin = ggplot2::margin(b = 4)),
       legend.position = "right",
       legend.key.size = ggplot2::unit(0.9, "lines"),
       plot.margin     = ggplot2::margin(12, 12, 12, 12)
     )
+}
+
+#' Legend labels for a set of SMR cut points
+#'
+#' Turns `c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf)` into
+#' `c("< 0.90", "0.90 - 0.95", "0.95 - 1.05", "1.05 - 1.10", "> 1.10")`.
+#'
+#' Exists so that `breaks` can be changed in one place. Keeping labels as a
+#' separate constant meant the two could silently disagree, and a legend that
+#' contradicts the cut points it describes is a quietly wrong figure rather
+#' than a broken one.
+#'
+#' @param breaks Numeric vector of cut points, normally opening with `-Inf` and
+#'   closing with `Inf`. Intervals are left-closed, matching
+#'   `cut(..., right = FALSE)`.
+#' @param digits Decimal places in the labels.
+#'
+#' @return A character vector, one shorter than `breaks`.
+#' @examples
+#' smr_break_labels(c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf))
+#' smr_break_labels(c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf))
+#' @export
+smr_break_labels <- function(breaks, digits = 2) {
+
+  n <- length(breaks)
+  if (n < 3L) {
+    stop("`breaks` needs at least three cut points to make two tiers.",
+         call. = FALSE)
+  }
+  fm <- function(x) formatC(x, format = "f", digits = digits)
+
+  lab <- character(n - 1L)
+  for (i in seq_len(n - 1L)) {
+    lo <- breaks[i]; hi <- breaks[i + 1L]
+    lab[i] <- if (is.infinite(lo) && lo < 0) paste0("< ", fm(hi))
+    else if (is.infinite(hi)) paste0("> ", fm(lo))
+    else paste0(fm(lo), " \u2013 ", fm(hi))
+  }
+  lab
 }

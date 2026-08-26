@@ -273,3 +273,50 @@ spdep::moran.mc(lrr, lw, nsim = 9999, zero.policy = TRUE)
 # After fit
 spdep::moran.mc(smr_geo_bym2$bym2_rr, lw, nsim = 999, zero.policy = TRUE)
 geostan::moran_plot( sf::st_drop_geometry(smr_geo_bym2)$bym2_rr, C_matrix)          # visual + the I in the title
+
+
+# =====================================================================
+# Mini test script for Deprivation EDA
+# =====================================================================
+
+
+library(targets)
+library(sf)
+library(ggplot2)
+library(dplyr)
+
+tar_source("R")   # for theme_atlas()
+
+di <- tar_read(deprivation_area) |>
+  right_join(st_as_sf(tar_read(area_shp)), by = "area") |>
+  st_as_sf()
+
+# Continuous. 0 is the national municipal average, so a diverging scale
+# centred there is the honest default: colour then means "more or less
+# deprived than Italy", not "more or less deprived than Milan".
+ggplot(di) +
+  geom_sf(aes(fill = di_score), colour = NA) +
+  scale_fill_gradient2(
+    low = "#5a8a7d", mid = "#f2e8d5", high = "#b5651d",
+    midpoint = 0, na.value = "grey88",
+    name = "Deprivation Index\n(sum of national z-scores)"
+  ) +
+  theme_atlas(map = TRUE)
+
+ggplot(di) +
+  geom_sf(aes(fill = factor(di_quintile)), colour = NA) +
+  scale_fill_manual(
+    values = c("1" = "#5a8a7d", "2" = "#a3c4b5", "3" = "#f2e8d5",
+               "4" = "#dca678", "5" = "#b5651d"),
+    na.value = "grey88",
+    name = "National quintile",
+    labels = c("1 least deprived", "2", "3", "4", "5 most deprived")
+  ) +
+  theme_atlas(map = TRUE)
+
+di |>
+  filter(di_score <= 10) |>
+  ggplot() +
+  geom_histogram(aes(di_score),
+                 bins = 30)
+

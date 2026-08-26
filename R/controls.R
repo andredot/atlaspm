@@ -112,6 +112,22 @@ attach_tracer_outcomes <- function(geo,
 #' @param deprivation Deprivation column for the positive control. Default
 #'   `"di_score_z"`.
 #' @param nce_exposure Negative control exposure column. `NULL` skips T3; see
+#' @param adjust Covariates to adjust for, applied identically to the tracer and
+#'   the negative control outcome. The DAG for Objective 3 has one backdoor
+#'   path, `A <- hub siting <- U -> Y`, where `U` is the latent urban-rural
+#'   position; these are its measured children on the outcome side, so
+#'   adjusting for them is proxy control for `U`.
+#' @param engine Estimator, passed to [fit_model()]. Defaults to `"glm"`. A
+#'   spatial random effect is a nonparametric estimate of that same `U`, and
+#'   because travel time is very nearly a deterministic function of position,
+#'   conditioning on a smooth spatial surface conditions on the exposure. The
+#'   BYM2 coefficient is then the effect of the exposure's non-spatial residual,
+#'   which is a different estimand - fit it as a sensitivity bound, not here.
+#' @param tracer_obs,tracer_exp Observed and expected counts for the tracer
+#'   and, when fitted, the negative control exposure. Default to the
+#'   cerebrovascular 0-74 outcome; the pipeline points them at the all-age
+#'   cerebral-infarction outcome (`i63_obs` / `i63_exp`), which is the
+#'   reference stroke model reported in the Results.
 #'   the note below.
 #' @param ... Passed to [fit_model()].
 #'
@@ -130,22 +146,37 @@ attach_tracer_outcomes <- function(geo,
 fit_controls <- function(geo, C, scale_factor,
                          exposure     = "t_hub_mean_z",
                          deprivation  = "di_score_z",
+                         adjust       = character(0),
+                         engine       = "glm",
                          nce_exposure = NULL,
+                         tracer_obs   = "cvd_obs",
+                         tracer_exp   = "cvd_exp",
                          ...) {
 
-  require_cols(geo, c(exposure, deprivation,
-                      "cvd_obs", "cvd_exp",
+  require_cols(geo, c(exposure, deprivation, adjust,
+                      tracer_obs, tracer_exp,
                       "cancer_obs", "cancer_exp",
                       "poscontrol_obs", "poscontrol_exp"), "geo")
 
+  # The tracer and the negative control outcome MUST share a right-hand side.
+  # The inference is the contrast between them, and a contrast between two
+  # differently-adjusted models measures the difference in adjustment as much
+  # as the difference in outcome.
+  rhs_exposed <- paste(c(exposure, setdiff(adjust, exposure)), collapse = " + ")
+
+  # The positive control's exposure IS deprivation, so deprivation cannot also
+  # sit in its adjustment set - it would be conditioning on the exposure.
+  rhs_positive <- paste(c(deprivation, setdiff(adjust, deprivation)),
+                        collapse = " + ")
+
   fits <- list(
-    tracer = fit_model(geo, rhs = exposure, engine = "bym2", C = C,
+    tracer = fit_model(geo, rhs = rhs_exposed, engine = engine, C = C,
                        scale_factor = scale_factor,
-                       obs_col = "cvd_obs", exp_col = "cvd_exp", ...),
-    nc_outcome = fit_model(geo, rhs = exposure, engine = "bym2", C = C,
+                       obs_col = tracer_obs, exp_col = tracer_exp, ...),
+    nc_outcome = fit_model(geo, rhs = rhs_exposed, engine = engine, C = C,
                            scale_factor = scale_factor,
                            obs_col = "cancer_obs", exp_col = "cancer_exp", ...),
-    positive = fit_model(geo, rhs = deprivation, engine = "bym2", C = C,
+    positive = fit_model(geo, rhs = rhs_positive, engine = engine, C = C,
                          scale_factor = scale_factor,
                          obs_col = "poscontrol_obs",
                          exp_col = "poscontrol_exp", ...)
@@ -153,9 +184,11 @@ fit_controls <- function(geo, C, scale_factor,
 
   if (!is.null(nce_exposure)) {
     require_cols(geo, nce_exposure, "geo")
-    fits$nc_exposure <- fit_model(geo, rhs = nce_exposure, engine = "bym2",
-                                  C = C, scale_factor = scale_factor,
-                                  obs_col = "cvd_obs", exp_col = "cvd_exp", ...)
+    fits$nc_exposure <- fit_model(
+      geo, rhs = paste(c(nce_exposure, setdiff(adjust, nce_exposure)),
+                       collapse = " + "),
+      engine = engine, C = C, scale_factor = scale_factor,
+      obs_col = tracer_obs, exp_col = tracer_exp, ...)
   } else {
     message("No negative control exposure supplied; T3 not fitted. ",
             "Set `nce_exposure` once the variable has been chosen.")
@@ -175,11 +208,30 @@ fit_controls <- function(geo, C, scale_factor,
 #' @param fits Output of [fit_controls()].
 #' @param labels Optional display labels for the exposures.
 #' @param probs Credible-interval bounds.
+#' @param tracer_outcome Display name of the tracer outcome, which must match
+#'   the `tracer_obs` / `tracer_exp` pair given to [fit_controls()]. Hardcoding
+#'   it here once meant the table kept saying "cerebrovascular mortality" after
+#'   the reference outcome changed.
+#' @param exposure Term name of the exposure under test. This is the *only* row
+#'   in the tracer and negative-control-outcome arms that the pre-specification
+#'   speaks to; the remaining rows in those arms are adjustment covariates and
+#'   are deliberately left unjudged.
+#' @param deprivation Term name of the positive control's exposure. Same logic:
+#'   the "should be present" expectation was written for deprivation against
+#'   lifestyle-preventable mortality, not for every covariate in that fit.
+#' @param nce_exposure Term name of the negative control exposure, or `NULL`
+#'   while T3 is unfitted.
 #'
-#' @return A tibble: `role`, `outcome`, `exposure`, `rr`, `ci_low`, `ci_high`,
-#'   `expectation`.
+#' @return A tibble: `role`, `outcome`, `term`, `label`, `estimate`, `ci_low`,
+#'   `ci_high`, `crosses_null`, `scored`, `verdict`, `expectation`. `scored` is
+#'   `TRUE` only for the designated exposure in each arm; `verdict` is
+#'   meaningful only on those rows.
 #' @export
-collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975)) {
+collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975),
+                             tracer_outcome = "I63 cerebral infarction, all ages",
+                             exposure     = "t_hub_mean_z",
+                             deprivation  = "di_score_z",
+                             nce_exposure = NULL) {
 
   roles <- c(
     tracer      = "Tracer",
@@ -188,9 +240,9 @@ collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975)) {
     positive    = "Positive control"
   )
   outcomes <- c(
-    tracer      = "Cerebrovascular mortality",
+    tracer      = tracer_outcome,
     nc_outcome  = "All-cancer mortality",
-    nc_exposure = "Cerebrovascular mortality",
+    nc_exposure = tracer_outcome,
     positive    = "Lifestyle/NCD-preventable mortality"
   )
   expectation <- c(
@@ -221,7 +273,29 @@ collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975)) {
   dir_obs      <- sign(log(coefs[["estimate"]]))
   want         <- unname(expected_dir[coefs[["model"]]])
 
+  # Each arm makes a claim about ONE coefficient - the exposure it was built to
+  # interrogate. The others in the same fit are the adjustment set, and judging
+  # them against the arm's expectation is a category error: deprivation is
+  # supposed to predict all-cancer mortality, so scoring it against the
+  # negative control's "should be null" produces a FAILS that says nothing
+  # about the control. Rows outside the designated term are marked not
+  # applicable rather than silently dropped, so the reader can see that the
+  # adjustment set was reported but deliberately not scored.
+  expected_term <- c(
+    tracer      = exposure,
+    nc_outcome  = exposure,
+    nc_exposure = if (is.null(nce_exposure)) NA_character_ else nce_exposure,
+    positive    = deprivation
+  )
+  is_target <- !is.na(coefs[["term"]]) &
+    coefs[["term"]] == unname(expected_term[coefs[["model"]]])
+  is_target[is.na(is_target)] <- FALSE
+
+  coefs[["scored"]] <- is_target
+  want[!is_target]  <- NA
+
   coefs[["verdict"]] <- dplyr::case_when(
+    !is_target                                    ~ "not applicable (adjustment covariate)",
     is.na(want)                                   ~ "no directional prediction",
     want == 0 &  coefs[["crosses_null"]]          ~ "as expected (null)",
     want == 0 & !coefs[["crosses_null"]]          ~ "FAILS: association where none expected",
@@ -242,7 +316,7 @@ collect_controls <- function(fits, labels = NULL, probs = c(0.025, 0.975)) {
   }
 
   coefs[, c("role", "outcome", "term", "label", "estimate", "ci_low",
-            "ci_high", "crosses_null", "verdict", "expectation")]
+            "ci_high", "crosses_null", "scored", "verdict", "expectation")]
 }
 
 
@@ -278,118 +352,4 @@ stroke_time_summary <- function(geo) {
          call. = FALSE)
   }
   covariate_summary(geo, vars)
-}
-
-
-# Primary care placeholder -----------------------------------------------------
-
-#' Synthetic GP density, standing in for the NAR extract
-#'
-#' \strong{This is not data.} It is a seeded synthetic covariate that lets M2,
-#' M5, M6 and M7 be fitted, checked and reported on before the Nuova Anagrafe
-#' Regionale extract exists. Every result that depends on it is provisional and
-#' the report says so wherever it appears.
-#'
-#' \strong{Why it is not simply a copy of the pollution surface.} Reusing the
-#' NO2 values verbatim would make `gp_density_z` and `no2_z` perfectly
-#' collinear. M5 contains both, so the model would be unidentified: the sampler
-#' would wander along the ridge where the two coefficients trade off, R-hat
-#' would fail, and the diagnostics would be reporting a defect of the
-#' placeholder rather than anything about the study. What is wanted is a
-#' covariate with a \emph{realistic spatial structure} and a realistic
-#' correlation with the other covariates, which is what this builds: the NO2
-#' surface is used as a spatial scaffold, then mixed with spatially smoothed
-#' noise to hit a target correlation.
-#'
-#' The sign is negative by default. The inverse care law, and the empirical
-#' pattern in the literature the methods cite, both point the same way: primary
-#' care supply tends to be lower where environmental and social disadvantage is
-#' higher.
-#'
-#' Replacing this with the real thing is a one-target change in `_targets.R`:
-#' swap `gp_density_area` from `simulate_gp_density()` to
-#' `compute_density_by_area()$density`. Nothing downstream needs to change,
-#' because the column name and shape are identical.
-#'
-#' @param pollution_area Area-level pollution table, used only as a spatial
-#'   scaffold.
-#' @param scaffold_col Column to scaffold from. Detected when `NULL`.
-#' @param target_cor Target Spearman correlation with the scaffold. Default
-#'   `-0.45`.
-#' @param mean_density,sd_density Mean and SD of the simulated density, on the
-#'   scale of GP full-time-equivalents per 1,000 residents. Defaults chosen to
-#'   sit in the plausible Italian range.
-#' @param seed Random seed, so the pipeline is reproducible.
-#'
-#' @return A tibble: `area`, `gp_density`, with `attr(, "synthetic") = TRUE`.
-#' @examples
-#' \dontrun{
-#' gp <- simulate_gp_density(pollution_area)
-#' stopifnot(isTRUE(attr(gp, "synthetic")))
-#' }
-#' @export
-simulate_gp_density <- function(pollution_area,
-                                scaffold_col = NULL,
-                                target_cor   = -0.45,
-                                mean_density = 0.75,
-                                sd_density   = 0.12,
-                                seed         = 20260821L) {
-
-  require_cols(pollution_area, "area", "pollution_area")
-
-  if (is.null(scaffold_col)) {
-    # Only a bare `<pollutant>_<year>` column, never a coverage or _z column,
-    # and the most recent year - the same rule exposure_columns() applies, so
-    # the placeholder is scaffolded on the exposure surface rather than on the
-    # 2013 diagnostic one.
-    cand <- grep("^(no2|pm25)_[0-9]{4}$", names(pollution_area), value = TRUE)
-    if (!length(cand)) {
-      stop("No pollutant column matching '<no2|pm25>_<year>' found in ",
-           "`pollution_area` to scaffold from. Available: ",
-           paste(names(pollution_area), collapse = ", "),
-           ". Pass `scaffold_col` explicitly.", call. = FALSE)
-    }
-    scaffold_col <- cand[which.max(as.integer(sub(".*_", "", cand)))]
-  }
-
-  x <- as.numeric(pollution_area[[scaffold_col]])
-  n <- length(x)
-
-  if (all(is.na(x)) || stats::sd(x, na.rm = TRUE) == 0) {
-    stop("The scaffold column '", scaffold_col, "' is constant or all NA.",
-         call. = FALSE)
-  }
-  x[is.na(x)] <- mean(x, na.rm = TRUE)
-
-  zs <- as.numeric(scale(x))
-
-  withr::with_seed(seed, {
-    noise <- stats::rnorm(n)
-    # Gram-Schmidt: make the noise exactly orthogonal to the scaffold, so the
-    # realised correlation is the requested one rather than the requested one
-    # plus whatever the noise happened to share with it.
-    noise <- noise - stats::coef(stats::lm(noise ~ zs))[2] * zs
-    noise <- as.numeric(scale(noise))
-
-    rho <- max(-0.95, min(0.95, target_cor))
-    z   <- rho * zs + sqrt(1 - rho^2) * noise
-  })
-
-  out <- tibble::tibble(
-    area       = pollution_area[["area"]],
-    gp_density = pmax(0.05, mean_density + sd_density * as.numeric(scale(z)))
-  )
-
-  attr(out, "synthetic")    <- TRUE
-  attr(out, "scaffold")     <- scaffold_col
-  attr(out, "realised_cor") <- stats::cor(out[["gp_density"]], x,
-                                          method = "spearman")
-  attr(out, "provenance")   <- paste0(
-    "SYNTHETIC PLACEHOLDER. Generated by simulate_gp_density(seed = ", seed,
-    ") from the '", scaffold_col, "' surface. Not derived from the NAR. ",
-    "Every estimate involving primary care capacity is provisional."
-  )
-
-  message(attr(out, "provenance"))
-  out
 }

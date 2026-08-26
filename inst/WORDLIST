@@ -21,6 +21,7 @@ GPs
 GeoTIFF
 GeoTIFFs
 Geocode
+Geocoding
 Geofabrik
 Hardcoding
 ICAR
@@ -35,6 +36,7 @@ Lombardia
 Metropolitana
 Milano
 Ministero
+Modelling
 Morte
 NAR
 NCDs
@@ -89,9 +91,9 @@ centres
 centro
 choropleth
 cli
-collinear
 colorectal
 coloured
+colours
 comune
 comune's
 comuni
@@ -121,6 +123,7 @@ geocoding
 geostan
 geostan's
 ggplot
+ggplots
 grey
 hardcode
 hardcoded
@@ -148,6 +151,7 @@ pre
 prehospital
 preventability
 prioritisation
+quintile
 quintiles
 quintili
 raster's
@@ -161,7 +165,9 @@ sezioni
 shapefile's
 standardisation
 standardised
+standardises
 stratifier
+summarise
 summarised
 summarises
 summarising
@@ -172,6 +178,8 @@ tibbles
 treedepth
 ug
 unclamped
+uninterpretable
 unrecognised
+unstandardised
 unstratified
 xlsx

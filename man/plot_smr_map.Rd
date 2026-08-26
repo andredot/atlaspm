@@ -7,7 +7,7 @@
 plot_smr_map(
   smr,
   value = "total_smr",
-  breaks = c(-Inf, 0.9, 0.95, 1.05, 1.1, Inf),
+  breaks = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
   title = "Avoidable mortality by area",
   subtitle = "Indirectly standardised mortality ratio (SMR), all avoidable causes",
   caption = "SMR = 1 means deaths match the area-wide age-sex expectation."

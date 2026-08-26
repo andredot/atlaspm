@@ -60,6 +60,23 @@ sd_of <- function(tbl, variable, digits = 2) {
 median_of <- function(tbl, variable, digits = 2) {
   r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["median"]], digits)
 }
+min_of <- function(tbl, variable, digits = 2) {
+  r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["min"]], digits)
+}
+max_of <- function(tbl, variable, digits = 2) {
+  r <- .cov_row(tbl, variable); if (is.null(r)) "\u2014" else fmt_num(r[["max"]], digits)
+}
+
+# Reciprocal of a covariate_summary() statistic, on a per-`scale` basis: the
+# primary-care indicator is a supply density (GP-equivalents per 1,000), but the
+# prose also quotes the caseload (residents per GP-equivalent), and the two are
+# reciprocals. Inverting `min` gives the LARGEST caseload, so the arguments are
+# deliberately crossed at the call site rather than here.
+recip_of <- function(tbl, variable, stat, scale = 1000, digits = 0) {
+  r <- .cov_row(tbl, variable)
+  if (is.null(r) || !is.finite(r[[stat]]) || r[[stat]] == 0) return("\u2014")
+  fmt_n(scale / r[[stat]], digits)
+}
 
 # Tolerant of the exposure-year suffix: cor_between(cc, "no2", "pm25") finds
 # no2_2023 and pm25_2023 without the year having to be written into the prose.
@@ -142,13 +159,52 @@ pareto_sentence <- function(pa, model = "M5") {
                           "whole study area and no observation exerts undue ",
                           "influence on the comparison."), model))
   }
+  med_flagged <- stats::median(pa[["expected"]], na.rm = TRUE)
+  ref         <- attr(pa, "median_expected_all")
+
+  # The direction of this comparison used to be asserted rather than computed,
+  # and it was asserted the wrong way round. In a BYM2 the high-k units are the
+  # high-count ones: an area with a large expected count effectively determines
+  # its own random effect, so removing it moves the posterior a long way and
+  # the importance weights degenerate. That is a property of the hierarchy, not
+  # a defect in the data.
+  where <- if (is.null(ref) || is.na(ref)) {
+    "so the approximation is least reliable in those units"
+  } else if (med_flagged > ref) {
+    sprintf(paste0("against a study-wide median of %s, so the flagged units ",
+                   "are the largest rather than the sparsest"),
+            fmt_num(ref, 1))
+  } else {
+    sprintf(paste0("against a study-wide median of %s, so the flagged units ",
+                   "are the sparsest"),
+            fmt_num(ref, 1))
+  }
+
   sprintf(paste0("Pareto-k exceeded 0.7 for %d area(s) under %s. Their median ",
-                 "expected count was %s, so these are the sparsest units, ",
-                 "where the leave-one-out approximation is least reliable and ",
-                 "each observation's influence on the fit is correspondingly ",
-                 "greater."),
-          nrow(pa), model,
-          fmt_num(stats::median(pa[["expected"]], na.rm = TRUE), 1))
+                 "expected count was %s, %s. Each of these observations exerts ",
+                 "correspondingly greater influence on the fit, which is where ",
+                 "the leave-one-out approximation degrades."),
+          nrow(pa), model, fmt_num(med_flagged, 1), where)
+}
+
+# A point estimate of "about a quarter" is not a finding when the interval runs
+# from clearly negative to well over half. The old wording ("rather less than
+# half") read the point estimate and ignored the bounds; this reads both.
+variance_verdict <- function(vr) {
+  r <- vr[["reduction"]]
+  if (is.null(r)) return("[NOT COMPUTED]")
+  if (r[["ci_low"]] > 0) {
+    sprintf(paste0("The interval excludes zero, so the measured determinants ",
+                   "account for a real but minority share of the geographical ",
+                   "variation in avoidable death."))
+  } else {
+    paste0("The interval spans zero, so while the point estimate attributes ",
+           "roughly a quarter of the geographical variation to the measured ",
+           "determinants, the data are also consistent with their accounting ",
+           "for none of it. The between-area variation in avoidable mortality ",
+           "is largely unexplained by deprivation, air quality and primary ",
+           "care capacity taken together.")
+  }
 }
 
 rr_range <- function(aug, value = "bym2_rr") {
@@ -197,12 +253,34 @@ mechanism_sentence <- function(mt) {
               paste(sprintf("%s (%d areas)", with_excess[["mechanism"]],
                             with_excess[["n_exceed"]]), collapse = "; "))
     else ". ",
-    sprintf("The mixing parameter ranged from %s to %s across strata, so the ",
+    sprintf("The mixing parameter ranged from %s to %s across strata. ",
             fmt_num(min(modelled[["rho"]], na.rm = TRUE), 2),
             fmt_num(max(modelled[["rho"]], na.rm = TRUE), 2)),
-    "share of residual variation that is spatially structured differs ",
-    "appreciably by service function."
+    # A range of point estimates is not a difference. rho is weakly identified
+    # at the best of times - separating the ICAR component from iid noise takes
+    # a lot of data - and in strata of a few hundred deaths the posterior is
+    # essentially the prior. Only claim a difference if some pair of intervals
+    # actually fails to overlap.
+    if (.rho_intervals_separate(modelled)) {
+      paste0("The credible intervals do not all overlap, so the share of ",
+             "residual variation that is spatially structured does differ by ",
+             "service function.")
+    } else {
+      paste0("The credible intervals overlap across every pair of strata and ",
+             "span most of the unit interval in the smaller ones, so rho is ",
+             "not identified at this stratum size and the spread of point ",
+             "estimates should not be read as a difference between service ",
+             "functions.")
+    }
   )
+}
+
+# TRUE when at least one pair of rho credible intervals is disjoint.
+.rho_intervals_separate <- function(modelled) {
+  lo <- modelled[["rho_low"]]
+  hi <- modelled[["rho_high"]]
+  if (is.null(lo) || is.null(hi) || length(lo) < 2) return(FALSE)
+  any(outer(lo, hi, ">") | outer(hi, lo, "<"), na.rm = TRUE)
 }
 
 stroke_time_sentence <- function(st) {
@@ -232,7 +310,8 @@ control_sentence <- function(ct) {
   parts <- character(0)
   if (!is.null(tr)) {
     parts <- c(parts, sprintf(
-      "The coefficient for travel time to the nearest thrombectomy hub on cerebrovascular mortality was %s.",
+      "The coefficient for travel time to the nearest thrombectomy hub on %s was %s.",
+      tolower(if (is.null(tr[["outcome"]])) "the tracer outcome" else tr[["outcome"]]),
       fmt_ci(tr[["estimate"]], tr[["ci_low"]], tr[["ci_high"]], 3)))
   }
   if (!is.null(nco)) {
@@ -380,4 +459,61 @@ moran_verdict <- function(tbl, model, alpha = 0.05) {
   p <- tbl[["p_value"]][tbl[["model"]] == model]
   if (!length(p) || is.na(p[1])) "[NOT COMPUTED]" else
     if (p[1] > alpha) "had" else "had not"
+}
+
+
+# --- stroke sub-model prose ---------------------------------------------------
+
+#' One sentence on how much of the cerebrovascular burden the reference outcome
+#' actually covers. The dilution arithmetic is deliberately explicit: an access
+#' effect can only act on the thrombectomy-eligible subset, and stating that
+#' fraction is what stops a null being read as "access does not matter".
+stroke_subtype_sentence <- function(sub,
+                                    lvo = 0.20, in_window = 0.50,
+                                    mortality_reduction = 0.30) {
+  if (is.null(sub) || !nrow(sub)) return("Subtype counts were not available.")
+
+  tot  <- sum(sub[["deaths"]])
+  i63  <- sum(sub[["deaths"]][grepl("^I63", sub[["subtype"]])])
+  haem <- sum(sub[["deaths"]][grepl("^I60", sub[["subtype"]])])
+  if (!tot) return("Subtype counts were not available.")
+
+  reachable <- (i63 / tot) * lvo * in_window
+
+  sprintf(paste0(
+    "Of %s cerebrovascular deaths at all ages, %s were cerebral infarction ",
+    "(%s) and %s were haemorrhagic (%s), which is a different care channel. ",
+    "If the exposure acted through thrombectomy alone it could touch roughly ",
+    "%s of the reference outcome (%s large-vessel occlusion, %s presenting in ",
+    "window), so a %s reduction in mortality within that subset would move ",
+    "total I63 mortality by about %s \u2014 below what a design of this size ",
+    "can resolve."),
+    fmt_n(tot), fmt_n(i63), fmt_pct(100 * i63 / tot),
+    fmt_n(haem), fmt_pct(100 * haem / tot),
+    fmt_pct(100 * reachable / (i63 / tot)),
+    fmt_pct(100 * lvo), fmt_pct(100 * in_window),
+    fmt_pct(100 * mortality_reduction),
+    fmt_pct(100 * reachable * mortality_reduction))
+}
+
+#' One sentence pairing what the smoothing did with how many areas survive it.
+i63_smoothing_sentence <- function(sm, exc) {
+  val <- function(q) {
+    i <- grep(q, sm[["Quantity"]], fixed = TRUE)
+    if (!length(i)) "\u2014" else sm[["Value"]][i[1]]
+  }
+  n80 <- if ("p80" %in% names(exc)) exc[["p80"]] else NA_integer_
+  n95 <- if ("p95" %in% names(exc)) exc[["p95"]] else NA_integer_
+
+  sprintf(paste0(
+    "With a median of %s expected deaths per area, the raw ratio ranged %s and ",
+    "the BYM2-smoothed relative risk %s; %s of the residual variation was ",
+    "spatially structured. %s of %s areal units carry at least an 80%% ",
+    "posterior probability that all-age I63 mortality runs more than 20%% ",
+    "above expectation, and %s reach 95%%."),
+    val("Median expected deaths per area"),
+    val("Range of raw SMR"),
+    val("Range of smoothed relative risk"),
+    val("Mixing parameter rho"),
+    fmt_n(n80), fmt_n(exc[["n_areas"]]), fmt_n(n95))
 }

@@ -271,3 +271,281 @@ import_census_2023 <- function(dir,
     purrr::list_rbind()
 }
 
+
+# Primary care ----------------------------------------------------------------
+
+#' Import the area-level primary-care density indicator
+#'
+#' Reads the assistance indicator exported from the Nuova Anagrafe Regionale
+#' (one row per modelling area) and returns it in the shape the modelling frame
+#' expects. This replaces the seeded placeholder that stood in for it while the
+#' extract did not exist: `gp_density` is now measured, and every model that
+#' carries `gp_density_z` is estimated on data.
+#'
+#' @details
+#' The file is the area-level collapse of [compute_density_by_area()], computed
+#' upstream against the register rather than in this package. Two schemas are
+#' accepted.
+#'
+#' \strong{Weighted (current).} Each patient counts according to the national
+#' care-burden weights, which vary by age and sex, so a list of 1,500 elderly
+#' patients represents more work than a list of 1,500 young adults:
+#' \describe{
+#'   \item{`n_assistiti`}{Registered patients in the area.}
+#'   \item{`sum_inv_weight`}{Summed \strong{weighted} GP supply,
+#'     \eqn{\sum_i w_i / L_{g(i)}} — GP-equivalents serving the area once each
+#'     GP is shared across their list and each patient is weighted by care
+#'     burden. Fractional by construction.}
+#'   \item{`sum_inv_count`}{The same sum \strong{unweighted}, retained so the
+#'     effect of the weighting can be measured rather than assumed.}
+#' }
+#' The indicator is computed here as `sum_inv_weight / n_assistiti`.
+#'
+#' \strong{Unweighted (legacy).} `numeratore`, `denominatore` and a
+#' precomputed `indicatore`.
+#'
+#' \strong{What the weighted indicator measures.} `gp_density` is a
+#' \emph{burden-adjusted} supply density: GP-equivalents per patient, with each
+#' patient counted according to the national age-sex care-burden schedule. An
+#' area whose patients are older therefore shows lower effective supply for the
+#' same headcount of doctors, which is the point. Coverage — residents without
+#' a registered GP — is accounted for upstream in the construction of
+#' `sum_inv_weight`, so it does not need handling again here.
+#'
+#' The unweighted indicator, `sum_inv_count / n_assistiti`, is the quantity the
+#' previous extract supplied. It is computed and carried forward as
+#' `gp_density_unweighted` whether or not it is used, because it is the only
+#' way to say what the re-weighting did: the two rank areas differently, so
+#' the choice is substantive rather than a rescaling.
+#'
+#' Two things are handled here rather than left to the caller.
+#'
+#' `area` is read as character. Read as a number it would lose the leading zero
+#' on every ISTAT code and turn each Milan NIL key (`"015146_79"`) into `NA`,
+#' collapsing the whole city into one row — a failure that produces a plausible
+#' looking table rather than an error.
+#'
+#' `indicatore` is around \eqn{7 \times 10^{-4}}, which prints as zeros in the
+#' covariate table and makes a per-SD coefficient hard to sanity-check against
+#' the literature. It is therefore rescaled to GP-equivalents per `per`
+#' residents (1,000 by default, the conventional unit for primary-care supply).
+#' The rescaling is a constant factor, so `gp_density_z` — and hence every
+#' model coefficient — is unchanged by it.
+#'
+#' @param file_path Path to the indicator CSV. Normally supplied by an upstream
+#'   `targets` file target resolving [get_input_data_path()].
+#' @param per Denominator for the reported density. Default `1000`.
+#' @param weighted Use the care-burden-weighted numerator when the file
+#'   provides it. Default `TRUE`. Setting `FALSE` reproduces the unweighted
+#'   indicator from the same file, which is the comparison to run before
+#'   reporting that the weighting mattered.
+#' @param tol Relative tolerance for the legacy schema's internal consistency
+#'   check. Default `1e-6`.
+#'
+#' @return A tibble, one row per area:
+#' \describe{
+#'   \item{area}{Modelling-area key, matching `area_shp$area`.}
+#'   \item{gp_density}{GP-equivalents per `per` residents. The covariate.}
+#'   \item{gp_caseload}{Residents per GP-equivalent — the reciprocal, which is
+#'     the form a service manager reads.}
+#'   \item{gp_supply, gp_population}{The numerator and denominator, retained so
+#'     the indicator can be re-aggregated or population-weighted.}
+#'   \item{gp_density_unweighted}{The \strong{previous} indicator,
+#'     `sum_inv_count / n_assistiti`, on the same `per` scale. Always computed
+#'     where the file allows it, and carried forward even when unused, so the
+#'     effect of the care-burden weighting can be quantified at any point
+#'     downstream without re-reading the file.}
+#'   \item{gp_supply_unweighted}{Its numerator.}
+#'   \item{gp_weight_ratio}{`sum_inv_weight / sum_inv_count`. Above 1 means the
+#'     area's patients are heavier than average on the national schedule —
+#'     older, or otherwise higher-burden. This is the column that says what the
+#'     re-weighting actually did, area by area.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' gp <- import_gp_density(get_input_data_path("indicatore_assistenza_2023.csv"))
+#' }
+#'
+#' @seealso [check_gp_density()], [compute_density_by_area()]
+#' @importFrom rlang .data
+#' @export
+import_gp_density <- function(file_path, per = 1000, weighted = TRUE,
+                              tol = 1e-6) {
+
+  raw <- readr::read_csv(
+    file_path,
+    col_types = readr::cols(area = readr::col_character(),
+                            .default = readr::col_double())
+  )
+  require_cols(raw, "area", "primary-care indicator file")
+
+  new_cols <- c("n_assistiti", "sum_inv_weight", "sum_inv_count")
+  old_cols <- c("numeratore", "denominatore", "indicatore")
+
+  schema <- if (all(new_cols %in% names(raw))) "weighted" else
+    if (all(old_cols %in% names(raw))) "legacy" else
+      stop("Unrecognised primary-care indicator schema. Expected either ",
+           paste(new_cols, collapse = "/"), " or ",
+           paste(old_cols, collapse = "/"), ".\n  Found: ",
+           paste(names(raw), collapse = ", "), call. = FALSE)
+
+  dup <- raw[["area"]][duplicated(raw[["area"]])]
+  if (length(dup)) {
+    stop("Duplicated `area` key(s) in the primary-care indicator: ",
+         paste(unique(dup), collapse = ", "),
+         ". One row per area is required, or add_covariate() would silently ",
+         "multiply the rows of the modelling frame.", call. = FALSE)
+  }
+
+  if (schema == "weighted") {
+    num_col <- if (weighted) "sum_inv_weight" else "sum_inv_count"
+    numerator   <- raw[[num_col]]
+    denominator <- raw[["n_assistiti"]]
+    unweighted  <- raw[["sum_inv_count"]]
+
+    # What the re-weighting did, per area. Reported rather than assumed: if
+    # the ratio is uniformly 1 the weights are not being applied, and if it
+    # ranges wildly the age-sex composition differs enough across areas that
+    # the weighted and unweighted indicators are answering different
+    # questions.
+    ratio <- raw[["sum_inv_weight"]] / raw[["sum_inv_count"]]
+    if (all(is.finite(ratio))) {
+      message(sprintf(
+        "Care-burden weighting: ratio of weighted to unweighted supply spans %.3f to %.3f (median %.3f).",
+        min(ratio), max(ratio), stats::median(ratio)))
+      if (isTRUE(all.equal(as.numeric(ratio), rep(1, length(ratio)),
+                           tolerance = 1e-8))) {
+        warning("Weighted and unweighted supply are identical in every area. ",
+                "The care-burden weights do not appear to have been applied ",
+                "upstream.", call. = FALSE)
+      }
+    }
+  } else {
+    numerator   <- raw[["numeratore"]]
+    denominator <- raw[["denominatore"]]
+    unweighted  <- raw[["numeratore"]]
+    ratio       <- rep(NA_real_, nrow(raw))
+
+    # Legacy files carry the ratio as well as its components; they should
+    # agree, and if they do not one of the three columns is from another run.
+    recomputed <- numerator / denominator
+    drift <- max(abs(recomputed - raw[["indicatore"]]) / raw[["indicatore"]])
+    if (drift > tol) {
+      stop("`indicatore` does not equal `numeratore / denominatore` ",
+           "(max relative difference ", format(drift, digits = 3),
+           "). The three columns appear to come from different extracts.",
+           call. = FALSE)
+    }
+    if (!weighted) {
+      warning("`weighted = FALSE` has no effect on a legacy file: it carries ",
+              "no weighted numerator.", call. = FALSE)
+    }
+  }
+
+  bad <- !is.finite(numerator) | numerator <= 0 |
+    !is.finite(denominator) | denominator <= 0
+  if (any(bad)) {
+    stop(sum(bad), " area(s) have a non-positive or missing numerator or ",
+         "denominator: ", paste(utils::head(raw[["area"]][bad], 10),
+                                collapse = ", "),
+         ". A zero denominator has no defined density and would propagate as ",
+         "Inf through the z-score.", call. = FALSE)
+  }
+
+  indicatore <- numerator / denominator
+
+  out <- tibble::tibble(
+    area                 = raw[["area"]],
+    gp_density           = indicatore * per,
+    gp_caseload          = 1 / indicatore,
+    gp_supply            = numerator,
+    gp_population        = denominator,
+    # The previous extract's indicator, computed here rather than left to be
+    # reconstructed later. Unused by any model, but a covariate whose
+    # definition changed mid-study should carry its predecessor alongside it:
+    # the alternative is a reader taking on trust that the change was neutral.
+    gp_density_unweighted = (unweighted / denominator) * per,
+    gp_supply_unweighted  = unweighted,
+    gp_weight_ratio       = ratio
+  )
+
+  attr(out, "schema")   <- schema
+  attr(out, "weighted") <- schema == "weighted" && weighted
+  out
+}
+
+
+#' Audit the primary-care indicator against the modelling geography
+#'
+#' The indicator and `area_shp` are built from different registers, so they
+#' need not cover the same areas, and a mismatch is invisible downstream:
+#' [add_covariate()] imputes an unmatched area from its neighbours' mean and
+#' only warns, so a systematic gap would enter the model as smoothed
+#' neighbouring values rather than as an error. This reports the overlap in
+#' both directions and quantifies how much population sits outside it.
+#'
+#' Two mismatches are expected against the current extract and are not faults:
+#' the indicator carries a bare `015146` row for Milan residents whose NIL did
+#' not resolve, and a row for NIL 8 (Parco Sempione), which the pipeline drops
+#' for having no resident population. Both are tiny; the point of the audit is
+#' that their size is reported rather than assumed.
+#'
+#' @param gp_density_area Output of [import_gp_density()].
+#' @param area_shp The modelling geography.
+#' @param max_unmatched_pct Warn when the share of modelled areas with no
+#'   indicator exceeds this. Default `1`.
+#'
+#' @return A one-row tibble: `n_areas`, `n_indicator`, `n_matched`,
+#'   `n_area_no_indicator`, `n_indicator_no_area`, `pop_unmatched`,
+#'   `pct_pop_unmatched`. The unmatched keys are attached as the
+#'   `"area_no_indicator"` and `"indicator_no_area"` attributes.
+#'
+#' @examples
+#' \dontrun{
+#' check_gp_density(gp_density_area, area_shp)
+#' }
+#'
+#' @seealso [import_gp_density()]
+#' @export
+check_gp_density <- function(gp_density_area, area_shp,
+                             max_unmatched_pct = 1) {
+
+  shp_keys  <- as.character(area_shp[["area"]])
+  data_keys <- as.character(gp_density_area[["area"]])
+
+  area_no_ind <- setdiff(shp_keys, data_keys)
+  ind_no_area <- setdiff(data_keys, shp_keys)
+
+  pop_out <- sum(
+    gp_density_area[["gp_population"]][data_keys %in% ind_no_area],
+    na.rm = TRUE
+  )
+
+  out <- tibble::tibble(
+    n_areas             = length(shp_keys),
+    n_indicator         = length(data_keys),
+    n_matched           = length(intersect(shp_keys, data_keys)),
+    n_area_no_indicator = length(area_no_ind),
+    n_indicator_no_area = length(ind_no_area),
+    pop_unmatched       = pop_out,
+    pct_pop_unmatched   = 100 * pop_out /
+      sum(gp_density_area[["gp_population"]], na.rm = TRUE)
+  )
+
+  attr(out, "area_no_indicator") <- area_no_ind
+  attr(out, "indicator_no_area") <- ind_no_area
+
+  pct_areas_missing <- 100 * out[["n_area_no_indicator"]] / out[["n_areas"]]
+  if (pct_areas_missing > max_unmatched_pct) {
+    warning(sprintf(
+      paste0("%d of %d modelled areas (%.1f%%) have no primary-care ",
+             "indicator and will be imputed from their neighbours by ",
+             "add_covariate(): %s"),
+      out[["n_area_no_indicator"]], out[["n_areas"]], pct_areas_missing,
+      paste(utils::head(area_no_ind, 10), collapse = ", ")),
+      call. = FALSE)
+  }
+
+  out
+}

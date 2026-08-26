@@ -10,7 +10,11 @@ fit_controls(
   scale_factor,
   exposure = "t_hub_mean_z",
   deprivation = "di_score_z",
+  adjust = character(0),
+  engine = "glm",
   nce_exposure = NULL,
+  tracer_obs = "cvd_obs",
+  tracer_exp = "cvd_exp",
   ...
 )
 }
@@ -27,7 +31,26 @@ attached by \code{\link[=add_stroke_access]{add_stroke_access()}} and \code{\lin
 \item{deprivation}{Deprivation column for the positive control. Default
 \code{"di_score_z"}.}
 
-\item{nce_exposure}{Negative control exposure column. \code{NULL} skips T3; see
+\item{adjust}{Covariates to adjust for, applied identically to the tracer and
+the negative control outcome. The DAG for Objective 3 has one backdoor
+path, \verb{A <- hub siting <- U -> Y}, where \code{U} is the latent urban-rural
+position; these are its measured children on the outcome side, so
+adjusting for them is proxy control for \code{U}.}
+
+\item{engine}{Estimator, passed to \code{\link[=fit_model]{fit_model()}}. Defaults to \code{"glm"}. A
+spatial random effect is a nonparametric estimate of that same \code{U}, and
+because travel time is very nearly a deterministic function of position,
+conditioning on a smooth spatial surface conditions on the exposure. The
+BYM2 coefficient is then the effect of the exposure's non-spatial residual,
+which is a different estimand - fit it as a sensitivity bound, not here.}
+
+\item{nce_exposure}{Negative control exposure column. \code{NULL} skips T3; see}
+
+\item{tracer_obs, tracer_exp}{Observed and expected counts for the tracer
+and, when fitted, the negative control exposure. Default to the
+cerebrovascular 0-74 outcome; the pipeline points them at the all-age
+cerebral-infarction outcome (\code{i63_obs} / \code{i63_exp}), which is the
+reference stroke model reported in the Results.
 the note below.}
 
 \item{...}{Passed to \code{\link[=fit_model]{fit_model()}}.}

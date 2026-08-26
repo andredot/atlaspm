@@ -862,3 +862,113 @@ check_stroke_access <- function(stroke_times, stroke_area, print = TRUE) {
   list(centroid_bias = bias, layer_variance = layer_variance,
        headline = headline)
 }
+
+
+#' Read a previously computed section-level travel-time table
+#'
+#' Restores the output of [build_stroke_times()] from a file, so the pipeline
+#' can resume from the routing results without rebuilding the road network.
+#'
+#' \strong{Why this exists.} [build_stroke_network()] takes 10-40 minutes and
+#' 8-16 GB, and needs an OSM extract on disk. Nothing downstream of
+#' `stroke_times` depends on the network object itself, so once the routing has
+#' been run and its output saved, every subsequent analysis can start from the
+#' table. The routing functions stay in the package and stay tested; only the
+#' pipeline's entry point moves.
+#'
+#' \strong{What it validates.} The columns [build_stroke_area()] consumes, and
+#' the two failure modes that would otherwise pass silently: an `area` key that
+#' does not match the modelling geography (aggregation would drop those
+#' sections), and travel times that are not plausibly minutes. A file saved
+#' from an older run with seconds, or with kilometres, would aggregate happily
+#' and produce an accessibility surface wrong by a constant factor.
+#'
+#' @param file_path Path to the saved table. `.rds`, `.csv` and `.parquet` are
+#'   recognised by extension.
+#' @param areas Optional character vector of valid modelling-area keys, for
+#'   checking. Normally `area_shp$area`.
+#' @param max_minutes Upper bound for a plausible travel time, used only to
+#'   catch a units mismatch. Default `600`.
+#'
+#' @return A tibble with the columns [build_stroke_area()] expects: `area`,
+#'   `pop`, `t_centre_min`, `t_hub_min`, `nearest_centre`, `nearest_hub`, plus
+#'   whatever else the file carries.
+#'
+#' @examples
+#' \dontrun{
+#' stroke_times <- import_stroke_times(
+#'   get_input_data_path("stroke_times.rds"), areas = area_shp$area
+#' )
+#' }
+#' @seealso [build_stroke_times()], [build_stroke_area()]
+#' @export
+import_stroke_times <- function(file_path, areas = NULL, max_minutes = 600) {
+
+  ext <- tolower(tools::file_ext(file_path))
+  out <- switch(
+    ext,
+    rds     = readRDS(file_path),
+    csv     = readr::read_csv(file_path, show_col_types = FALSE,
+                              col_types = readr::cols(
+                                area           = readr::col_character(),
+                                nearest_centre = readr::col_character(),
+                                nearest_hub    = readr::col_character(),
+                                .default       = readr::col_double())),
+    parquet = {
+      if (!requireNamespace("arrow", quietly = TRUE)) {
+        stop("Reading .parquet needs the arrow package.", call. = FALSE)
+      }
+      tibble::as_tibble(arrow::read_parquet(file_path))
+    },
+    stop("Unrecognised extension '", ext, "'. Expected rds, csv or parquet.",
+         call. = FALSE)
+  )
+
+  needed <- c("area", "pop", "t_centre_min", "t_hub_min",
+              "nearest_centre", "nearest_hub")
+  require_cols(out, needed, "saved stroke_times")
+
+  out[["area"]] <- as.character(out[["area"]])
+
+  # Units. A table saved in seconds would aggregate without complaint and give
+  # an accessibility surface wrong by a factor of sixty.
+  for (v in c("t_centre_min", "t_hub_min")) {
+    x <- out[[v]][is.finite(out[[v]])]
+    if (length(x) && max(x) > max_minutes) {
+      stop("`", v, "` reaches ", round(max(x)), ", above the plausible bound ",
+           "of ", max_minutes, " minutes. The saved file is probably in ",
+           "seconds rather than minutes.", call. = FALSE)
+    }
+    if (length(x) && any(x < 0)) {
+      stop("`", v, "` contains negative values.", call. = FALSE)
+    }
+  }
+
+  n_unreached <- sum(!is.finite(out[["t_hub_min"]]))
+
+  if (!is.null(areas)) {
+    missing_area <- setdiff(unique(out[["area"]]), areas)
+    empty_area   <- setdiff(areas, unique(out[["area"]]))
+    if (length(missing_area)) {
+      warning(length(missing_area), " area key(s) in the saved routing are not ",
+              "in the modelling geography and will be dropped on aggregation: ",
+              paste(utils::head(missing_area, 8), collapse = ", "),
+              call. = FALSE)
+    }
+    if (length(empty_area)) {
+      warning(length(empty_area), " modelling area(s) have no routed section ",
+              "and will get a missing travel time: ",
+              paste(utils::head(empty_area, 8), collapse = ", "),
+              call. = FALSE)
+    }
+  }
+
+  message(sprintf(
+    "stroke_times restored: %s sections, %s areas, %s population, %s unreached.",
+    format(nrow(out), big.mark = ","),
+    format(dplyr::n_distinct(out[["area"]]), big.mark = ","),
+    format(round(sum(out[["pop"]], na.rm = TRUE)), big.mark = ","),
+    format(n_unreached, big.mark = ",")))
+
+  tibble::as_tibble(out)
+}
