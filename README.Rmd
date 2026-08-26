@@ -1,9 +1,14 @@
 ---
 output: github_document
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
+```{=html}
 <!-- README.md is generated from README.Rmd. Please edit that file, then run
      devtools::build_readme(). -->
+```
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -18,108 +23,122 @@ knitr::opts_chunk$set(
 # atlaspm
 
 <!-- badges: start -->
+
 [![check-prod](https://github.com/andredot/atlaspm/actions/workflows/check-prod.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/check-prod.yaml)
 [![check-dev](https://github.com/andredot/atlaspm/actions/workflows/check-dev.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/check-dev.yaml)
 [![test-coverage](https://github.com/andredot/atlaspm/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/test-coverage.yaml)
 [![lint](https://github.com/andredot/atlaspm/actions/workflows/lint.yaml/badge.svg)](https://github.com/andredot/atlaspm/actions/workflows/lint.yaml)
+
 <!-- badges: end -->
 
-**A Bayesian spatial analysis of avoidable mortality determinants in the ATS
-Milano territory.**
+**A Bayesian spatial analysis of avoidable mortality determinants in the
+ATS Milano territory.**
 
-`atlaspm` is the analysis code for an MPH thesis (London School of Hygiene and
-Tropical Medicine) estimating where avoidable deaths cluster across the ATS Città Metropolitana di Milano territory, and how
-much of that clustering is explained by area deprivation, air pollution and
-primary care capacity.
+`atlaspm` is the analysis code for an MPH Project at the London School
+of Hygiene and Tropical Medicine estimating where avoidable deaths
+cluster across the ATS Città Metropolitana di Milano territory, and how
+much of that clustering is explained by area deprivation, air pollution
+and primary care capacity.
 
-It is an R package wrapped around a [`targets`](https://docs.ropensci.org/targets/)
-pipeline: the package holds the functions, the pipeline holds the analysis, and
-a Quarto document renders every reported number straight from the pipeline, so
+It is an R package wrapped around a
+[`targets`](https://docs.ropensci.org/targets/) pipeline: the package
+holds the functions, the pipeline holds the analysis, and a Quarto
+document renders every reported number straight from the pipeline, so
 nothing in the write-up is transcribed by hand.
 
-> ### ⚠ Status: active research code
+> ### Status: active research code
 >
-> This is a thesis in progress, not a finished product. In particular, **the
-> primary care covariate is currently a seeded synthetic placeholder**
-> (`simulate_gp_density()`) standing in for a regional GP registry extract that
-> has not yet been obtained. Every estimate involving primary care capacity —
-> models M2, M5, M6 and M7, and the residual-excess estimand defined against
-> M5 — is provisional. The reporting document prints a banner wherever this
-> applies. Please don't cite numbers from this repository.
+> This is a thesis in progress. Findings are provisional and under
+> revision; please don't cite numbers from this repository. The pipeline
+> runs end to end on the real extracts the synthetic primary-care
+> placeholder that stood in for the GP registry has been replaced by the
+> 2023 care-burden-weighted indicator.
 
 ## What it estimates
 
-An ecological analysis of **deaths before age 75 in 2022–2024**, classified as
-avoidable using the joint OECD/Eurostat list, across **279 areal units**: 193
-municipalities, less Milan, plus the 87 populated Local Identity Units (NIL)
-into which Milan is disaggregated. Milan formally has 88 NILs; Parco Sempione
-is a park with no resident population, hence no denominator.
+An ecological analysis of **deaths before age 75 in 2022–2024**,
+classified as avoidable using the joint OECD/Eurostat list, across **279
+areal units**: 193 municipalities, less Milan, plus the 87 populated
+Local Identity Units (NIL) into which Milan is disaggregated.
 
 Three objectives:
 
-1. **Describe** the spatial distribution of avoidable mortality, estimating a
-   smoothed risk surface that separates signal from small-count noise.
-2. **Explain** how much of the between-area variation is attributable to
-   deprivation, air pollution and primary care supply — and report honestly how
-   much is not.
-3. **Probe** one mechanism in depth, using time-to-treatment for stroke as a
-   tracer condition with a negative control outcome.
+1.  **Describe** the spatial distribution of avoidable mortality,
+    estimating a smoothed risk surface that separates signal from
+    small-count noise.
+2.  **Explain** how much of the between-area variation is attributable
+    to deprivation, air pollution and primary care supply — and report
+    honestly how much is not.
+3.  **Probe** one mechanism in depth, using time-to-treatment for stroke
+    as a tracer condition with a negative control outcome.
 
-The primary estimand is the **residual excess**: deaths occurring beyond what
-an area's age and sex structure and measured covariates jointly predict, i.e.
-relative to `E · exp(α + xβ)`, with the spatial random effects deliberately
-excluded — including them would make the estimand identically zero.
+The primary estimand is the **residual excess**: deaths occurring beyond
+what an area's age and sex structure and measured covariates jointly
+predict, i.e. relative to `E · exp(α + xβ)`, with the spatial random
+effects deliberately excluded — including them would make the estimand
+identically zero.
 
 ## Methods in brief
 
 | Component | Approach |
-|---|---|
-| Outcome | Deaths 0–74, 2022–2024, OECD/Eurostat avoidable list; fractional weights for causes split across the preventable and treatable lists |
-| Denominator | Person-years summed over 2022–2024, so every rate is annualised |
+|------------------------------------|------------------------------------|
+| Outcome | Deaths 0 to 74, 2022-2024, OECD/Eurostat avoidable list; fractional weights for causes split across the preventable and treatable lists |
+| Denominator | Person-years summed over 2022-2024, so every rate is annualised |
 | Standardisation | Indirect, internal standard, by single year of age and sex |
 | Spatial model | BYM2 via `geostan::stan_icar()`, ICAR component scaled per Riebler et al. (2016) |
 | Alternative | Eigenvector spatial filtering (`geostan::stan_esf()`), as a check on how the covariate/random-effect partition is drawn |
-| Deprivation | Permanent-census reformulation of the Italian Deprivation Index (Rosano et al. 2020), built at areal-unit resolution against a national municipal reference distribution |
+| Deprivation | Permanent-census reformulation of the Italian Deprivation Index (Rosano et al. 2020), built at areal-unit resolution against a national municipal reference distribution. Stability checked against the same four indicators computed from the 2011 general census |
+| Primary care | Burden-adjusted GP supply: GP-equivalents per registered patient, each patient weighted by the national age-sex care-burden schedule. The unweighted predecessor is carried alongside, but it's not used |
 | Air pollution | EEA 1 km interpolated concentration maps, area-weighted extraction |
-| Stroke access | Population-weighted census-section origins, OSM road network, AREU emergency speed model, routed with `dodgr` |
-| Exceedance | P(RR > 1.10) > 0.80, following Richardson et al. (2004) |
+| Stroke access | Population-weighted census-section origins, OSM road network, AREU emergency speed model, routed with `dodgr`. The routing is computed once and read back from a saved table |
+| Exceedance | P(RR \> 1.10) \> 0.80 |
 
 ### The seven models
 
-All share one Poisson likelihood with `log(expected)` as an offset, which is
-what makes the leave-one-out comparison across them legitimate.
+All share one Poisson likelihood with `log(expected)` as an offset,
+which is what makes the leave-one-out comparison across them legitimate.
 
-| ID | Specification | Engine |
-|---|---|---|
-| M1 | Intercept only | GLM |
-| M2 | Covariates, no random effect | GLM |
-| M3 | BYM2, no covariates | BYM2 |
-| M4 | BYM2 + deprivation | BYM2 |
-| M5 | BYM2 + deprivation, NO₂, primary care | BYM2 |
-| M6 | As M5, eigenvector spatial filtering | ESF |
-| M7 | As M5, PM2.5 in place of NO₂ | BYM2 |
+| ID  | Specification                         | Engine |
+|-----|---------------------------------------|--------|
+| M1  | Intercept only                        | GLM    |
+| M2  | Covariates, no random effect          | GLM    |
+| M3  | BYM2, no covariates                   | BYM2   |
+| M4  | BYM2 + deprivation                    | BYM2   |
+| M5  | BYM2 + deprivation, NO₂, primary care | BYM2   |
+| M6  | As M5, eigenvector spatial filtering  | ESF    |
+| M7  | As M5, PM2.5 in place of NO₂          | BYM2   |
 
 Models are defined in a single `model_specs` tibble in `_targets.R` and
-expanded by `tarchetypes::tar_map()`, so a formula is edited in exactly one
-place and the target name, the table row and the figure panel all follow.
+expanded by `tarchetypes::tar_map()`, so a formula is edited in exactly
+one place and the target name, the table row and the figure panel all
+follow. The same four-way structure — no spatial term, spatial term
+alone, spatial term plus exposure, and an alternative spatial
+parameterisation — is reused for the stroke sub-model, because a null
+coefficient means something different in each and the four together
+separate "no association" from "not identified".
 
 ## Data availability
 
-**The individual-level mortality data cannot be shared.** Death records come
-from the Lombardy Registro Nominativo delle Cause di Morte (ReNCaM) under a
-data-sharing agreement with ATS Città Metropolitana di Milano, and are held on
-a restricted network share.
+**The individual-level mortality data cannot be shared.** Death records
+come from the Lombardy Registro Nominativo delle Cause di Morte (ReNCaM)
+under a data-sharing agreement with ATS Città Metropolitana di Milano,
+and are held on a restricted network share.
 
-Everything else is public: ISTAT population, census and boundary releases, EEA
-air quality maps, OpenStreetMap, and the regional register of accredited stroke
-centres. The avoidable-cause lookup (`avoidable_lookup_v3.csv`) is in the
-repository and Appendix B of the report is generated from it, so the
-classification as actually applied is fully inspectable even without the
-deaths.
+The primary-care indicator is also restricted: it is an area-level
+collapse of the regional assistance register (NAR), supplied as
+`indicatore_assistenza_2023.csv`.
+
+Everything else is public: ISTAT population, census and boundary
+releases (including the 2011 general census at section level, used for
+the deprivation stability check), EEA air quality maps, OpenStreetMap,
+and the regional register of accredited stroke centres. The
+avoidable-cause lookup (`avoidable_lookup_v3.csv`) is in the repository
+and Appendix B of the report is generated from it, so the classification
+as actually applied is fully inspectable even without the deaths.
 
 Input paths resolve through two environment variables:
 
-```r
+``` r
 # .Renviron
 PRJ_SHARED_PATH   = "/path/to/restricted/share"
 INPUT_DATA_FOLDER = "input_data"
@@ -127,82 +146,83 @@ INPUT_DATA_FOLDER = "input_data"
 
 ## Running it
 
-```r
+``` r
 # 1. restore the pinned dependency versions
 renv::restore()
 
 # 2. inspect the dependency graph before committing to a run
-targets::tar_visnetwork()
+targets::tar_visnetwork(targets_only = TRUE)
 
 # 3. run
-targets::tar_make()
+.run()
 ```
 
-Two warnings about cost. The road network target (`stroke_network`) takes
-10–40 minutes and 8–16 GB of RAM on first build, though `targets` caches it
-thereafter. Fitting seven models, seven per-mechanism strata and the control
-panel is a few hours on four cores.
+One warning about cost: fitting seven models, seven per-mechanism
+strata, the tracer and control panel and the all-age stroke outcomes is
+a few hours on four cores.
 
-To iterate without re-rendering the report each time:
+The road-network build used to dominate that (10–40 minutes and 8-16
+GB), and it needs an OSM extract on disk. Nothing downstream of
+`stroke_times` touches the network object, so the routing is now
+computed once and read back, at least for ATS Milan area:
 
-```r
-targets::tar_make(names = !tidyselect::any_of("thesis_results"))
+``` r
+# in _targets.R
+tar_target(stroke_times_path, get_input_data_path("stroke_times.rds"),
+           format = "file"),
+tar_target(stroke_times, import_stroke_times(stroke_times_path,
+                                             areas = area_shp$area)),
+```
+
+`format = "file"` means `targets` tracks the saved table by hash, so
+replacing it rebuilds everything downstream. The routing functions are
+unchanged and still tested; only the pipeline's entry point moved. To
+re-run them (after a change to the centre list, the speed model or the
+section origins) uncomment the block above them in `_targets.R` and save
+the result back:
+
+``` r
+saveRDS(targets::tar_read(stroke_times),
+        file.path(Sys.getenv("PRJ_SHARED_PATH"),
+                  Sys.getenv("INPUT_DATA_FOLDER"), "stroke_times.rds"))
 ```
 
 ## Output
 
-`reports/thesis_results.qmd` renders to GitHub-flavoured Markdown, so results
-can be pasted into a manuscript and regenerated whenever the data changes. It
-opens with a numbers card listing every scalar the Results prose interpolates,
-then works through descriptive epidemiology, covariate distributions, model
-comparison, the risk surface and residual excess, the seven mechanism strata,
-and the tracer/control panel. Figures are written to `output/figures/` at
-300 dpi.
+Two Quarto reports, both rendering to self-contained HTML with figures
+written to `output/figures/` at 300 dpi.
 
-## Example output
+**`reports/thesis_results.qmd`**: the main result tables and figures.
+Opens with a numbers card listing every scalar the Results prose
+interpolates, then works through descriptive epidemiology, covariate
+distributions, model comparison, the risk surface and residual excess,
+the seven mechanism strata, and the tracer and control panel.
 
-The primary output for service planning: not relative risk, but the count of
-deaths per year beyond what age structure, deprivation, air pollution and
-primary care capacity jointly predict. Counts rather than ratios because a
-doubled risk in an area of 4,000 and a 10% excess in an area of 90,000 mean
-very different things to a planner, and a ratio map hides that.
+**`reports/stroke_results.qmd`**: objective 3 subanalysis in depth. The
+stroke network and its geocoding, travel-time surfaces, whether the
+design has the exposure contrast to detect anything at all, the
+outcome-definition problem (only a minority of premature cerebrovascular
+deaths are the ischaemic strokes thrombectomy acts on), and the same set
+of specifications applied to both the 0–74 avoidable outcome and the
+all-age register outcomes.
 
-```{r regenerate-figure, include = FALSE, eval = file.exists(file.path("_targets", "objects", "fig_excess_map"))}
-# Regenerated only where the targets store exists, i.e. on a machine with the
-# restricted data. Elsewhere the committed PNG below is served as-is, so
-# devtools::build_readme() works for anyone who clones the repository.
-dir.create("man/figures", recursive = TRUE, showWarnings = FALSE)
-ggplot2::ggsave(
-  "man/figures/README-risk-surface.png",
-  targets::tar_read(fig_excess_map),
-  width = 190, height = 150, units = "mm", dpi = 200, bg = "white"
-)
-```
-
-```{r risk-surface, echo = FALSE, eval = file.exists("man/figures/README-risk-surface.png"), fig.alt = "Choropleth of the ATS Milano territory showing residual excess avoidable deaths per year by areal unit, with Milan disaggregated into its Local Identity Units."}
-knitr::include_graphics("man/figures/README-risk-surface.png")
-```
-
-<sub>Residual excess under M5, posterior mean, deaths per year.
-**Provisional** while primary care capacity remains synthetic.</sub>
-
-To refresh it after a pipeline run:
-
-```r
-devtools::build_readme()
-# then commit man/figures/README-risk-surface.png alongside README.md
-```
+Both regenerate from the pipeline, so no reported number is transcribed
+by hand. Two exploratory scripts sit alongside them
+(`explore_gp_supply.R` and `explore.R` ) which read targets and never
+re-derive anything.
 
 ## Repository layout
 
-```
+```         
 R/                    package functions
   import_.R           readers for each source
   preprocess_.R       cause classification, standardisation, person-years
   deprivation.R       Italian Deprivation Index at areal-unit resolution
+  deprivation_2011.R  2011 census import and the stability check
   pollution_.R        EEA raster extraction and pollutant selection
-  stroke.R            road network, routing, accessibility
-  nar_density.R       primary care supply (awaiting the real extract)
+  stroke.R            road network, routing, accessibility, saved-routing import
+  stroke_report.R     stroke reporting: centre table, exposure contrast, maps
+  nar_density.R       primary care supply from the register (upstream helpers)
   fit_model.R         one dispatcher for M1-M7
   model.R             BYM2 fitting, diagnostics, LOO comparison
   estimand.R          residual excess, variance decomposition, Moran's I
@@ -211,44 +231,23 @@ R/                    package functions
   summarise.R         fits -> tidy tables
   plot_.R             maps
   plot_report.R       publication figures
-_targets.R            the pipeline (~100 targets)
-reports/              Quarto reporting document
+_targets.R            the pipeline
+reports/              two Quarto reports + exploratory scripts
 tests/testthat/       unit tests
 ```
 
-## Design notes
-
-A few choices that are deliberate and easy to mistake for accidents.
-
-- **One row per decedent, always.** `mort_count` holds one row per death *per
-  avoidability arm*, because nine causes are split. Anything counting people
-  goes through `build_deaths()`; anything tallying mechanisms goes through
-  `build_death_arms()`, which preserves the fractional weights. Conflating the
-  two silently loses half a death per split cause — the sort of error that
-  produces a table which still sums correctly.
-- **Fail loudly, upstream.** Guards assert what a function needs rather than
-  letting a wrong-but-plausible value propagate. `assert_sex_alignment()`
-  exists because a death/population sex-code mismatch yields a perfectly
-  ordinary-looking SMR; `round_half_up()` exists because base `round()` is
-  round-half-to-even and disagrees with the stated methods on exactly the
-  half-integers that split causes generate.
-- **The report reads tables, not fits.** Every collector returns a data frame,
-  so rendering never has to hold fourteen posterior sample arrays in memory.
-
 ## Citation
 
-```
-Pedot A (2026). atlaspm: A Bayesian Spatial Analysis of Avoidable Mortality
-Determinants in the ATS Milano Territory. MPH thesis, London School of Hygiene
-and Tropical Medicine. https://github.com/andredot/atlaspm
+```         
+Pedot A (2026). atlaspm: A Bayesian Spatial Analysis of Avoidable Mortality Determinants in the ATS Milano Territory. MPH thesis, London School of Hygiene and Tropical Medicine. https://github.com/andredot/atlaspm
 ```
 
 ## Licence
 
-See [LICENSE](LICENSE). The code is available for inspection and reuse; the
-mortality data it consumes is not redistributable.
+See [LICENSE](LICENSE). The code is available for inspection and reuse;
+the mortality data it consumes is not redistributable.
 
 ## Contact
 
-Andrea Pedot — [andrea.pedot@unimi.it](mailto:andrea.pedot@unimi.it) ·
+Andrea Pedot — [andrea.pedot\@unimi.it](mailto:andrea.pedot@unimi.it) ·
 [ORCID 0000-0001-7050-1378](https://orcid.org/0000-0001-7050-1378)

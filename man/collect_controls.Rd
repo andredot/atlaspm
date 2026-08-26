@@ -8,7 +8,10 @@ collect_controls(
   fits,
   labels = NULL,
   probs = c(0.025, 0.975),
-  tracer_outcome = "I63 cerebral infarction, all ages"
+  tracer_outcome = "I63 cerebral infarction, all ages",
+  exposure = "t_hub_mean_z",
+  deprivation = "di_score_z",
+  nce_exposure = NULL
 )
 }
 \arguments{
@@ -22,10 +25,24 @@ collect_controls(
 the \code{tracer_obs} / \code{tracer_exp} pair given to \code{\link[=fit_controls]{fit_controls()}}. Hardcoding
 it here once meant the table kept saying "cerebrovascular mortality" after
 the reference outcome changed.}
+
+\item{exposure}{Term name of the exposure under test. This is the \emph{only} row
+in the tracer and negative-control-outcome arms that the pre-specification
+speaks to; the remaining rows in those arms are adjustment covariates and
+are deliberately left unjudged.}
+
+\item{deprivation}{Term name of the positive control's exposure. Same logic:
+the "should be present" expectation was written for deprivation against
+lifestyle-preventable mortality, not for every covariate in that fit.}
+
+\item{nce_exposure}{Term name of the negative control exposure, or \code{NULL}
+while T3 is unfitted.}
 }
 \value{
-A tibble: \code{role}, \code{outcome}, \code{exposure}, \code{rr}, \code{ci_low}, \code{ci_high},
-\code{expectation}.
+A tibble: \code{role}, \code{outcome}, \code{term}, \code{label}, \code{estimate}, \code{ci_low},
+\code{ci_high}, \code{crosses_null}, \code{scored}, \code{verdict}, \code{expectation}. \code{scored} is
+\code{TRUE} only for the designated exposure in each arm; \code{verdict} is
+meaningful only on those rows.
 }
 \description{
 Puts the four coefficients side by side with an explicit statement of what

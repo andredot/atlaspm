@@ -4,7 +4,7 @@
 \alias{import_gp_density}
 \title{Import the area-level primary-care density indicator}
 \usage{
-import_gp_density(file_path, per = 1000, tol = 1e-06)
+import_gp_density(file_path, per = 1000, weighted = TRUE, tol = 1e-06)
 }
 \arguments{
 \item{file_path}{Path to the indicator CSV. Normally supplied by an upstream
@@ -12,8 +12,13 @@ import_gp_density(file_path, per = 1000, tol = 1e-06)
 
 \item{per}{Denominator for the reported density. Default \code{1000}.}
 
-\item{tol}{Relative tolerance when checking that \code{indicatore} equals
-\code{numeratore / denominatore}. Default \code{1e-6}.}
+\item{weighted}{Use the care-burden-weighted numerator when the file
+provides it. Default \code{TRUE}. Setting \code{FALSE} reproduces the unweighted
+indicator from the same file, which is the comparison to run before
+reporting that the weighting mattered.}
+
+\item{tol}{Relative tolerance for the legacy schema's internal consistency
+check. Default \code{1e-6}.}
 }
 \value{
 A tibble, one row per area:
@@ -24,6 +29,16 @@ A tibble, one row per area:
 the form a service manager reads.}
 \item{gp_supply, gp_population}{The numerator and denominator, retained so
 the indicator can be re-aggregated or population-weighted.}
+\item{gp_density_unweighted}{The \strong{previous} indicator,
+\code{sum_inv_count / n_assistiti}, on the same \code{per} scale. Always computed
+where the file allows it, and carried forward even when unused, so the
+effect of the care-burden weighting can be quantified at any point
+downstream without re-reading the file.}
+\item{gp_supply_unweighted}{Its numerator.}
+\item{gp_weight_ratio}{\code{sum_inv_weight / sum_inv_count}. Above 1 means the
+area's patients are heavier than average on the national schedule —
+older, or otherwise higher-burden. This is the column that says what the
+re-weighting actually did, area by area.}
 }
 }
 \description{
@@ -35,15 +50,39 @@ carries \code{gp_density_z} is estimated on data.
 }
 \details{
 The file is the area-level collapse of \code{\link[=compute_density_by_area]{compute_density_by_area()}}, computed
-upstream against the register rather than in this package:
+upstream against the register rather than in this package. Two schemas are
+accepted.
+
+\strong{Weighted (current).} Each patient counts according to the national
+care-burden weights, which vary by age and sex, so a list of 1,500 elderly
+patients represents more work than a list of 1,500 young adults:
 \describe{
-\item{\code{numeratore}}{Summed GP supply, \eqn{\sum_i 1 / L_{g(i)}} over
-resident person-time — the number of GP-equivalents serving the area
-once each GP is shared out across their list. Fractional by
-construction.}
-\item{\code{denominatore}}{Resident person-time in the denominator.}
-\item{\code{indicatore}}{Their ratio: GP-equivalents per resident.}
+\item{\code{n_assistiti}}{Registered patients in the area.}
+\item{\code{sum_inv_weight}}{Summed \strong{weighted} GP supply,
+\eqn{\sum_i w_i / L_{g(i)}} — GP-equivalents serving the area once each
+GP is shared across their list and each patient is weighted by care
+burden. Fractional by construction.}
+\item{\code{sum_inv_count}}{The same sum \strong{unweighted}, retained so the
+effect of the weighting can be measured rather than assumed.}
 }
+The indicator is computed here as \code{sum_inv_weight / n_assistiti}.
+
+\strong{Unweighted (legacy).} \code{numeratore}, \code{denominatore} and a
+precomputed \code{indicatore}.
+
+\strong{What the weighted indicator measures.} \code{gp_density} is a
+\emph{burden-adjusted} supply density: GP-equivalents per patient, with each
+patient counted according to the national age-sex care-burden schedule. An
+area whose patients are older therefore shows lower effective supply for the
+same headcount of doctors, which is the point. Coverage — residents without
+a registered GP — is accounted for upstream in the construction of
+\code{sum_inv_weight}, so it does not need handling again here.
+
+The unweighted indicator, \code{sum_inv_count / n_assistiti}, is the quantity the
+previous extract supplied. It is computed and carried forward as
+\code{gp_density_unweighted} whether or not it is used, because it is the only
+way to say what the re-weighting did: the two rank areas differently, so
+the choice is substantive rather than a rescaling.
 
 Two things are handled here rather than left to the caller.
 

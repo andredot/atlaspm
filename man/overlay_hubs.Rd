@@ -2,15 +2,17 @@
 % Please edit documentation in R/stroke_report.R
 \name{overlay_hubs}
 \alias{overlay_hubs}
-\title{Overlay the thrombectomy hubs on an existing map}
+\title{Overlay the stroke network on an existing map}
 \usage{
 overlay_hubs(
   p,
   centres,
-  hubs_only = TRUE,
+  hubs_only = FALSE,
+  crop = TRUE,
   size = 2.4,
   fill = "white",
-  colour = "grey10"
+  colour = "grey10",
+  legend_title = NULL
 )
 }
 \arguments{
@@ -18,20 +20,40 @@ overlay_hubs(
 
 \item{centres}{\code{sf} of stroke centres.}
 
-\item{hubs_only}{Show only level-II hubs. Default \code{TRUE}.}
+\item{hubs_only}{Show only level-II hubs. Default \code{FALSE}, so the spoke
+network is visible too - the distinction between the two carries the
+argument throughout this analysis, and a map that hides it invites the
+reader to assume every marker offers thrombectomy.}
+
+\item{crop}{Clip the map to the underlying layer's bounding box. Default
+\code{TRUE}.}
 
 \item{size, fill, colour}{Marker appearance. White with a dark outline reads
-against every tier of both the SMR and the exceedance palette.}
+against every tier of both palettes.}
+
+\item{legend_title}{Title for the shape legend. \code{NULL} for none.}
 }
 \value{
-The ggplot, with the hub layer added.
+The ggplot, with the centre layer and its legend added.
 }
 \description{
-Adds hubs to a map produced by \code{\link[=plot_smr_map]{plot_smr_map()}} or \code{\link[=plot_exceedance_map]{plot_exceedance_map()}}
-without disturbing the fill scale. Those functions use a discrete
-\code{scale_fill_manual}, so a second layer mapping anything to \code{fill} would
-either fail or silently recycle the palette; the hub marker therefore sets
-fill as a fixed parameter rather than an aesthetic.
+Adds centres to a map from \code{\link[=plot_smr_map]{plot_smr_map()}} or \code{\link[=plot_exceedance_map]{plot_exceedance_map()}},
+with a legend, without disturbing the fill scale.
+}
+\details{
+Two things this handles that a bare \code{geom_sf()} does not.
+
+\strong{Extent.} Routing deliberately includes centres well outside the ATS
+Milano boundary, because residents near the edge may be closer to them. Drawn
+naively, those points expand the plot to cover Varese, Bergamo and Pavia and
+the study area shrinks into a corner. The map is cropped back to the
+choropleth's own bounding box, so out-of-area centres inform the routing but
+do not dictate the frame.
+
+\strong{Legend.} Marker type is mapped to the \code{shape} aesthetic rather than
+set as a fixed parameter, which is what produces a legend entry. \code{fill} stays
+a fixed parameter because the panel's discrete SMR or exceedance palette
+already owns that scale.
 }
 \examples{
 \dontrun{
