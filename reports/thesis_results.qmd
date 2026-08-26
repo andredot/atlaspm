@@ -25,6 +25,11 @@ knitr:
   opts_chunk:
     dev: "png"
     dpi: 300
+    # Quarto's HTML format defaults to fig.retina = 2, which silently renders
+    # every figure at DOUBLE the stated dpi. Setting it to 1 makes dpi mean
+    # what it says: the PNGs written to fig.path are true 300 dpi for the
+    # thesis, and the embedded HTML is a quarter of the size.
+    fig.retina: 1
     fig.path: "../output/figures/"
 ---
 
@@ -658,11 +663,11 @@ mechanism_diagnostics |>
         caption = "Convergence diagnostics for the seven per-mechanism models.")
 ```
 
-```{r fig-mech, fig.cap="BYM2-smoothed relative risk by service function.", fig.height=9}
+```{r fig-mech, fig.cap="BYM2-smoothed relative risk by service function.", fig.width=10, fig.height=10}
 fig_mech_facets
 ```
 
-```{r fig-mech-exc, fig.cap="Exceedance probabilities by service function.", fig.height=9}
+```{r fig-mech-exc, fig.cap="Exceedance probabilities by service function.", fig.width=10, fig.height=10}
 fig_mech_exceedance
 ```
 

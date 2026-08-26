@@ -284,15 +284,39 @@ import_census_2023 <- function(dir,
 #'
 #' @details
 #' The file is the area-level collapse of [compute_density_by_area()], computed
-#' upstream against the register rather than in this package:
+#' upstream against the register rather than in this package. Two schemas are
+#' accepted.
+#'
+#' \strong{Weighted (current).} Each patient counts according to the national
+#' care-burden weights, which vary by age and sex, so a list of 1,500 elderly
+#' patients represents more work than a list of 1,500 young adults:
 #' \describe{
-#'   \item{`numeratore`}{Summed GP supply, \eqn{\sum_i 1 / L_{g(i)}} over
-#'     resident person-time — the number of GP-equivalents serving the area
-#'     once each GP is shared out across their list. Fractional by
-#'     construction.}
-#'   \item{`denominatore`}{Resident person-time in the denominator.}
-#'   \item{`indicatore`}{Their ratio: GP-equivalents per resident.}
+#'   \item{`n_assistiti`}{Registered patients in the area.}
+#'   \item{`sum_inv_weight`}{Summed \strong{weighted} GP supply,
+#'     \eqn{\sum_i w_i / L_{g(i)}} — GP-equivalents serving the area once each
+#'     GP is shared across their list and each patient is weighted by care
+#'     burden. Fractional by construction.}
+#'   \item{`sum_inv_count`}{The same sum \strong{unweighted}, retained so the
+#'     effect of the weighting can be measured rather than assumed.}
 #' }
+#' The indicator is computed here as `sum_inv_weight / n_assistiti`.
+#'
+#' \strong{Unweighted (legacy).} `numeratore`, `denominatore` and a
+#' precomputed `indicatore`.
+#'
+#' \strong{What the weighted indicator measures.} `gp_density` is a
+#' \emph{burden-adjusted} supply density: GP-equivalents per patient, with each
+#' patient counted according to the national age-sex care-burden schedule. An
+#' area whose patients are older therefore shows lower effective supply for the
+#' same headcount of doctors, which is the point. Coverage — residents without
+#' a registered GP — is accounted for upstream in the construction of
+#' `sum_inv_weight`, so it does not need handling again here.
+#'
+#' The unweighted indicator, `sum_inv_count / n_assistiti`, is the quantity the
+#' previous extract supplied. It is computed and carried forward as
+#' `gp_density_unweighted` whether or not it is used, because it is the only
+#' way to say what the re-weighting did: the two rank areas differently, so
+#' the choice is substantive rather than a rescaling.
 #'
 #' Two things are handled here rather than left to the caller.
 #'
@@ -311,8 +335,12 @@ import_census_2023 <- function(dir,
 #' @param file_path Path to the indicator CSV. Normally supplied by an upstream
 #'   `targets` file target resolving [get_input_data_path()].
 #' @param per Denominator for the reported density. Default `1000`.
-#' @param tol Relative tolerance when checking that `indicatore` equals
-#'   `numeratore / denominatore`. Default `1e-6`.
+#' @param weighted Use the care-burden-weighted numerator when the file
+#'   provides it. Default `TRUE`. Setting `FALSE` reproduces the unweighted
+#'   indicator from the same file, which is the comparison to run before
+#'   reporting that the weighting mattered.
+#' @param tol Relative tolerance for the legacy schema's internal consistency
+#'   check. Default `1e-6`.
 #'
 #' @return A tibble, one row per area:
 #' \describe{
@@ -322,6 +350,16 @@ import_census_2023 <- function(dir,
 #'     the form a service manager reads.}
 #'   \item{gp_supply, gp_population}{The numerator and denominator, retained so
 #'     the indicator can be re-aggregated or population-weighted.}
+#'   \item{gp_density_unweighted}{The \strong{previous} indicator,
+#'     `sum_inv_count / n_assistiti`, on the same `per` scale. Always computed
+#'     where the file allows it, and carried forward even when unused, so the
+#'     effect of the care-burden weighting can be quantified at any point
+#'     downstream without re-reading the file.}
+#'   \item{gp_supply_unweighted}{Its numerator.}
+#'   \item{gp_weight_ratio}{`sum_inv_weight / sum_inv_count`. Above 1 means the
+#'     area's patients are heavier than average on the national schedule —
+#'     older, or otherwise higher-burden. This is the column that says what the
+#'     re-weighting actually did, area by area.}
 #' }
 #'
 #' @examples
@@ -332,15 +370,25 @@ import_census_2023 <- function(dir,
 #' @seealso [check_gp_density()], [compute_density_by_area()]
 #' @importFrom rlang .data
 #' @export
-import_gp_density <- function(file_path, per = 1000, tol = 1e-6) {
+import_gp_density <- function(file_path, per = 1000, weighted = TRUE,
+                              tol = 1e-6) {
 
   raw <- readr::read_csv(
     file_path,
     col_types = readr::cols(area = readr::col_character(),
                             .default = readr::col_double())
   )
-  require_cols(raw, c("area", "numeratore", "denominatore", "indicatore"),
-               "primary-care indicator file")
+  require_cols(raw, "area", "primary-care indicator file")
+
+  new_cols <- c("n_assistiti", "sum_inv_weight", "sum_inv_count")
+  old_cols <- c("numeratore", "denominatore", "indicatore")
+
+  schema <- if (all(new_cols %in% names(raw))) "weighted" else
+    if (all(old_cols %in% names(raw))) "legacy" else
+      stop("Unrecognised primary-care indicator schema. Expected either ",
+           paste(new_cols, collapse = "/"), " or ",
+           paste(old_cols, collapse = "/"), ".\n  Found: ",
+           paste(names(raw), collapse = ", "), call. = FALSE)
 
   dup <- raw[["area"]][duplicated(raw[["area"]])]
   if (length(dup)) {
@@ -350,34 +398,81 @@ import_gp_density <- function(file_path, per = 1000, tol = 1e-6) {
          "multiply the rows of the modelling frame.", call. = FALSE)
   }
 
-  bad <- !is.finite(raw[["indicatore"]]) | raw[["indicatore"]] <= 0 |
-    !is.finite(raw[["denominatore"]]) | raw[["denominatore"]] <= 0
+  if (schema == "weighted") {
+    num_col <- if (weighted) "sum_inv_weight" else "sum_inv_count"
+    numerator   <- raw[[num_col]]
+    denominator <- raw[["n_assistiti"]]
+    unweighted  <- raw[["sum_inv_count"]]
+
+    # What the re-weighting did, per area. Reported rather than assumed: if
+    # the ratio is uniformly 1 the weights are not being applied, and if it
+    # ranges wildly the age-sex composition differs enough across areas that
+    # the weighted and unweighted indicators are answering different
+    # questions.
+    ratio <- raw[["sum_inv_weight"]] / raw[["sum_inv_count"]]
+    if (all(is.finite(ratio))) {
+      message(sprintf(
+        "Care-burden weighting: ratio of weighted to unweighted supply spans %.3f to %.3f (median %.3f).",
+        min(ratio), max(ratio), stats::median(ratio)))
+      if (isTRUE(all.equal(as.numeric(ratio), rep(1, length(ratio)),
+                           tolerance = 1e-8))) {
+        warning("Weighted and unweighted supply are identical in every area. ",
+                "The care-burden weights do not appear to have been applied ",
+                "upstream.", call. = FALSE)
+      }
+    }
+  } else {
+    numerator   <- raw[["numeratore"]]
+    denominator <- raw[["denominatore"]]
+    unweighted  <- raw[["numeratore"]]
+    ratio       <- rep(NA_real_, nrow(raw))
+
+    # Legacy files carry the ratio as well as its components; they should
+    # agree, and if they do not one of the three columns is from another run.
+    recomputed <- numerator / denominator
+    drift <- max(abs(recomputed - raw[["indicatore"]]) / raw[["indicatore"]])
+    if (drift > tol) {
+      stop("`indicatore` does not equal `numeratore / denominatore` ",
+           "(max relative difference ", format(drift, digits = 3),
+           "). The three columns appear to come from different extracts.",
+           call. = FALSE)
+    }
+    if (!weighted) {
+      warning("`weighted = FALSE` has no effect on a legacy file: it carries ",
+              "no weighted numerator.", call. = FALSE)
+    }
+  }
+
+  bad <- !is.finite(numerator) | numerator <= 0 |
+    !is.finite(denominator) | denominator <= 0
   if (any(bad)) {
-    stop(sum(bad), " area(s) have a non-positive or missing indicator or ",
+    stop(sum(bad), " area(s) have a non-positive or missing numerator or ",
          "denominator: ", paste(utils::head(raw[["area"]][bad], 10),
                                 collapse = ", "),
          ". A zero denominator has no defined density and would propagate as ",
          "Inf through the z-score.", call. = FALSE)
   }
 
-  # The file carries the ratio as well as its two components. They should
-  # agree; if they do not, one of the three columns is from a different run.
-  recomputed <- raw[["numeratore"]] / raw[["denominatore"]]
-  drift <- max(abs(recomputed - raw[["indicatore"]]) / raw[["indicatore"]])
-  if (drift > tol) {
-    stop("`indicatore` does not equal `numeratore / denominatore` ",
-         "(max relative difference ", format(drift, digits = 3),
-         "). The three columns appear to come from different extracts.",
-         call. = FALSE)
-  }
+  indicatore <- numerator / denominator
 
-  tibble::tibble(
-    area          = raw[["area"]],
-    gp_density    = raw[["indicatore"]] * per,
-    gp_caseload   = 1 / raw[["indicatore"]],
-    gp_supply     = raw[["numeratore"]],
-    gp_population = raw[["denominatore"]]
+  out <- tibble::tibble(
+    area                 = raw[["area"]],
+    gp_density           = indicatore * per,
+    gp_caseload          = 1 / indicatore,
+    gp_supply            = numerator,
+    gp_population        = denominator,
+    # The previous extract's indicator, computed here rather than left to be
+    # reconstructed later. Unused by any model, but a covariate whose
+    # definition changed mid-study should carry its predecessor alongside it:
+    # the alternative is a reader taking on trust that the change was neutral.
+    gp_density_unweighted = (unweighted / denominator) * per,
+    gp_supply_unweighted  = unweighted,
+    gp_weight_ratio       = ratio
   )
+
+  attr(out, "schema")   <- schema
+  attr(out, "weighted") <- schema == "weighted" && weighted
+  out
 }
 
 

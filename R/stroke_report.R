@@ -212,6 +212,11 @@ plot_stroke_centres <- function(area_shp, centres, caption = NULL) {
     ggplot2::scale_fill_manual(values = c("Hub (thrombectomy)" = "#8c2d04",
                                           "Spoke" = "white")) +
     ggplot2::labs(caption = caption) +
+    ggplot2::coord_sf(
+      xlim   = c(sf::st_bbox(a)[["xmin"]], sf::st_bbox(a)[["xmax"]]),
+      ylim   = c(sf::st_bbox(a)[["ymin"]], sf::st_bbox(a)[["ymax"]]),
+      expand = TRUE
+    ) +
     theme_atlas(map = TRUE)
 }
 
@@ -495,36 +500,84 @@ outcome_feasibility <- function(outcome, label) {
 }
 
 
-#' Overlay the thrombectomy hubs on an existing map
+#' Overlay the stroke network on an existing map
 #'
-#' Adds hubs to a map produced by [plot_smr_map()] or [plot_exceedance_map()]
-#' without disturbing the fill scale. Those functions use a discrete
-#' `scale_fill_manual`, so a second layer mapping anything to `fill` would
-#' either fail or silently recycle the palette; the hub marker therefore sets
-#' fill as a fixed parameter rather than an aesthetic.
+#' Adds centres to a map from [plot_smr_map()] or [plot_exceedance_map()],
+#' with a legend, without disturbing the fill scale.
+#'
+#' Two things this handles that a bare `geom_sf()` does not.
+#'
+#' \strong{Extent.} Routing deliberately includes centres well outside the ATS
+#' Milano boundary, because residents near the edge may be closer to them. Drawn
+#' naively, those points expand the plot to cover Varese, Bergamo and Pavia and
+#' the study area shrinks into a corner. The map is cropped back to the
+#' choropleth's own bounding box, so out-of-area centres inform the routing but
+#' do not dictate the frame.
+#'
+#' \strong{Legend.} Marker type is mapped to the `shape` aesthetic rather than
+#' set as a fixed parameter, which is what produces a legend entry. `fill` stays
+#' a fixed parameter because the panel's discrete SMR or exceedance palette
+#' already owns that scale.
 #'
 #' @param p A ggplot from one of the map functions.
 #' @param centres `sf` of stroke centres.
-#' @param hubs_only Show only level-II hubs. Default `TRUE`.
+#' @param hubs_only Show only level-II hubs. Default `FALSE`, so the spoke
+#'   network is visible too - the distinction between the two carries the
+#'   argument throughout this analysis, and a map that hides it invites the
+#'   reader to assume every marker offers thrombectomy.
+#' @param crop Clip the map to the underlying layer's bounding box. Default
+#'   `TRUE`.
 #' @param size,fill,colour Marker appearance. White with a dark outline reads
-#'   against every tier of both the SMR and the exceedance palette.
+#'   against every tier of both palettes.
+#' @param legend_title Title for the shape legend. `NULL` for none.
 #'
-#' @return The ggplot, with the hub layer added.
+#' @return The ggplot, with the centre layer and its legend added.
 #' @examples
 #' \dontrun{
 #' plot_smr_map(aug_cvd, value = "bym2_rr") |> overlay_hubs(stroke_centres)
 #' }
 #' @export
-overlay_hubs <- function(p, centres, hubs_only = TRUE, size = 2.4,
-                         fill = "white", colour = "grey10") {
+overlay_hubs <- function(p, centres, hubs_only = FALSE, crop = TRUE,
+                         size = 2.4, fill = "white", colour = "grey10",
+                         legend_title = NULL) {
 
   cen <- sf::st_as_sf(centres)
   if (hubs_only && "is_hub" %in% names(cen)) cen <- cen[cen[["is_hub"]], ]
 
-  p + ggplot2::geom_sf(
+  cen[[".marker"]] <- if ("is_hub" %in% names(cen)) {
+    factor(ifelse(cen[["is_hub"]],
+                  "Thrombectomy hub (SU II)", "Stroke unit (SU I)"),
+           levels = c("Thrombectomy hub (SU II)", "Stroke unit (SU I)"))
+  } else {
+    factor("Stroke centre")
+  }
+
+  out <- p + ggplot2::geom_sf(
     data = cen, inherit.aes = FALSE,
-    shape = 24, size = size, fill = fill, colour = colour, stroke = 0.5
-  )
+    ggplot2::aes(shape = .data[[".marker"]]),
+    size = size, fill = fill, colour = colour, stroke = 0.5
+  ) +
+    ggplot2::scale_shape_manual(
+      values = c("Thrombectomy hub (SU II)" = 24,   # filled triangle
+                 "Stroke unit (SU I)"       = 21,   # filled circle
+                 "Stroke centre"            = 21),
+      name   = legend_title,
+      drop   = TRUE
+    ) +
+    ggplot2::guides(shape = ggplot2::guide_legend(order = 2))
+
+  # Crop to the choropleth, not to the union of choropleth and centres.
+  if (crop && !is.null(p$data)) {
+    bb <- tryCatch(sf::st_bbox(sf::st_as_sf(p$data)), error = function(e) NULL)
+    if (!is.null(bb)) {
+      out <- out + ggplot2::coord_sf(
+        xlim   = c(bb[["xmin"]], bb[["xmax"]]),
+        ylim   = c(bb[["ymin"]], bb[["ymax"]]),
+        expand = TRUE
+      )
+    }
+  }
+  out
 }
 
 

@@ -134,7 +134,9 @@ plot_smr_facets <- function(smr,
                             breaks       = c(-Inf, 0.8, 0.9, 1.1, 1.2, Inf),
                             strip_prefix = "^[A-Z]_",
                             strip_suffix = "_smr$",
-                            ncol         = 4,
+                            label_fun    = NULL,
+                            wrap         = 24,
+                            ncol         = 3,
                             title    = "Standardised avoidable mortality by mechanism, by area",
                             subtitle = paste("Indirectly age-sex standardised mortality ratio (SMR);",
                                              "1 = deaths match the age-sex expectation"),
@@ -168,8 +170,18 @@ plot_smr_facets <- function(smr,
     tidyr::pivot_longer(-".row", names_to = "category", values_to = "smr") |>
     dplyr::mutate(
       smr_class = cut(.data[["smr"]], breaks = breaks, labels = labels, right = FALSE),
-      category  = stringr::str_remove(.data[["category"]], strip_prefix),
+      # With a label_fun, strip only the SUFFIX and hand the stem over intact:
+      # mechanism_label() needs the "M_" prefix to recognise what it is looking
+      # at. Without one, fall back to the raw stem - which is snake_case and
+      # unreadable in a strip, since janitor::make_clean_names() turns
+      # "Lifestyle and NCDs" into "lifestyle_and_nc_ds".
       category  = stringr::str_remove(.data[["category"]], strip_suffix),
+      category  = if (is.null(label_fun)) {
+        stringr::str_remove(.data[["category"]], strip_prefix)
+      } else {
+        label_fun(.data[["category"]])
+      },
+      category  = stringr::str_wrap(.data[["category"]], width = wrap),
       category  = stringr::str_replace_all(.data[["category"]], "_", " ")
     ) |>
     dplyr::left_join(geom_lookup, by = ".row") |>
@@ -192,7 +204,7 @@ plot_smr_facets <- function(smr,
       plot.subtitle   = ggplot2::element_text(colour = "grey30",
                                               margin = ggplot2::margin(b = 10)),
       plot.caption    = ggplot2::element_text(colour = "grey45", size = 9, hjust = 0),
-      strip.text      = ggplot2::element_text(face = "bold", size = 11,
+      strip.text      = ggplot2::element_text(face = "bold", size = 9,
                                               margin = ggplot2::margin(4, 0, 4, 0)),
       legend.position = "right",
       legend.key.size = ggplot2::unit(0.9, "lines"),
@@ -562,7 +574,9 @@ plot_exceedance_facets <- function(geo,
                                    threshold       = NULL,
                                    strip_prefix    = "^M_",
                                    strip_suffix    = "_bym2_exc$",
-                                   ncol            = 4,
+                                   label_fun       = NULL,
+                                   wrap            = 24,
+                                   ncol            = 3,
                                    title    = "Strategic prioritisation map by mechanism, by area",
                                    subtitle = NULL,
                                    caption  = "Per-mechanism BYM2 exceedance probabilities; tiers shared across panels.",
@@ -614,8 +628,13 @@ plot_exceedance_facets <- function(geo,
     ) |>
     dplyr::mutate(
       mechanism = stringr::str_replace_all(
-        stringr::str_remove(stringr::str_remove(mechanism, strip_prefix),
-                            strip_suffix),
+        {
+          stem <- stringr::str_remove(mechanism, strip_suffix)
+          out  <- if (is.null(label_fun)) {
+            stringr::str_remove(stem, strip_prefix)
+          } else label_fun(stem)
+          stringr::str_wrap(out, width = wrap)
+        },
         "_", " "),
       .tier = factor(
         dplyr::case_when(
@@ -648,7 +667,7 @@ plot_exceedance_facets <- function(geo,
       plot.subtitle   = ggplot2::element_text(colour = "grey30",
                                               margin = ggplot2::margin(b = 10)),
       plot.caption    = ggplot2::element_text(colour = "grey45", size = 9, hjust = 0),
-      strip.text      = ggplot2::element_text(face = "bold", size = 11,
+      strip.text      = ggplot2::element_text(face = "bold", size = 9,
                                               margin = ggplot2::margin(b = 4)),
       legend.position = "right",
       legend.key.size = ggplot2::unit(0.9, "lines"),

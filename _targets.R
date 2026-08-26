@@ -51,12 +51,6 @@ STROKE_RHS <- paste(c(STROKE_EXPOSURE, STROKE_ADJUST), collapse = " + ")
 # ---------------------------------------------------------------------------
 # MODEL SPECIFICATIONS
 # ---------------------------------------------------------------------------
-# The single source of truth for M1-M7. Target names, table rows and figure
-# panels all derive from `id`, so the thesis and the pipeline share one
-# vocabulary: a reader of Table 3 can find the target that produced each row.
-#
-# This is a plain object, not a target: tar_map() needs its values at the time
-# the pipeline is defined.
 model_specs <- tibble::tribble(
   ~id,  ~label,                                     ~engine, ~rhs,
   "M1", "Intercept only",                           "glm",   "1",
@@ -103,10 +97,6 @@ list(
              get_input_data_path("geodata/ds964_nil_wm/NIL_WM.shp") |>
                sf::st_read(quiet = TRUE) |> sf::st_make_valid()),
 
-  # NIL 8 (Parco Sempione) has no resident population, so no denominator, no
-  # expected count and no defined log-offset. Dropping it here rather than
-  # letting it fail downstream is what produces the 279 analysis units the
-  # methods now state: 193 comuni - 1 (Milan) + 87 NILs.
   tar_target(area_shp_all, build_area_shp(nil_shp, pop_shp)),
   tar_target(area_shp, drop_unpopulated_areas(area_shp_all, pop_area_table)),
   tar_target(study_area_summary, summarise_study_area(area_shp, pop_area_table,
@@ -161,10 +151,8 @@ list(
   tar_target(C_matrix, build_adjacency(smr_geo)),
   tar_target(scale_factor, compute_scale_factor(C_matrix)),
 
-  # STROBE/RECORD flow, and the size of the external-causes gap the discussion
-  # relies on.
   tar_target(flow, flow_counts(mort_raw, mort_count, mort_count_area,
-                               area_shp)),
+                               area_shp)), # STROBE/RECORD flow
 
   # === DEPRIVATION (at modelling-area resolution) ==========================
   tar_target(sez_shp,
@@ -196,17 +184,6 @@ list(
   ),
 
   # === PRIMARY CARE ========================================================
-  # The assistance indicator from the Nuova Anagrafe Regionale, collapsed to
-  # the modelling geography upstream: one row per area, with GP-equivalents
-  # (sum of 1/list_size over resident person-time) over resident person-time.
-  # import_gp_density() rescales it to GP-equivalents per 1,000 residents; the
-  # z-score add_covariate() takes, and hence every coefficient, is unaffected
-  # by that constant.
-  #
-  # gp_density_audit is not decorative. add_covariate() imputes an unmatched
-  # area from its neighbours' mean and only warns, so without this target a
-  # systematic gap between the indicator and area_shp would enter the models
-  # as smoothed neighbouring values and never surface.
   tar_target(gp_density_path,
              get_input_data_path("indicatore_assistenza_2023.csv"),
              format = "file"),
@@ -234,33 +211,52 @@ list(
         "Istituto Clinico S. Anna"                = c(45.55361, 10.18027),
         "Fondazione IRCCS Policlinico San Matteo" = c(45.19622, 9.14884),
         "Ospedale G. Salvini"                     = c(45.58284, 9.09504),
-        "Ospedale di Chiari"                      = c(45.53827, 9.93333)
+        "Ospedale di Chiari"                      = c(45.53827, 9.93333),
+        "Istituto Clinico Humanitas"              = c(45.37363,	9.16496)
       )
     )
   ),
-  tar_target(section_points, build_section_points(sez_shp, area_shp,
-                                                  pop_col = "POP21")),
-  tar_target(urban_mask, build_urban_mask(sez_shp, tipo_loc_col = "TIPO_LOC")),
-  tar_target(stroke_aoi,
-             smr_geo |> sf::st_transform(32632L) |> sf::st_union() |>
-               sf::st_buffer(40000)),
-  # The slow target: 10-40 min and 8-16 GB. Cached by targets thereafter.
-  tar_target(stroke_network,
-             build_stroke_network(stroke_aoi, urban_mask,
-                                  speed_model = "areu",
-                                  osm_dir = get_input_data_path("osm"))),
+  # --- ROUTING: computed once, then read back -------------------------------
+  #
+  # The network build is 10-40 minutes and 8-16 GB and needs an OSM extract on
+  # disk, and nothing downstream of `stroke_times` touches the network object.
+  # The routing has been run and its output saved, so the pipeline now resumes
+  # from the table.
+  #
+  # The functions below are unchanged and still tested; only the pipeline's
+  # entry point has moved. TO RE-RUN THE ROUTING - after a change to the
+  # centre list, the speed model, or the section origins - comment out the
+  # `stroke_times` target below and uncomment this block, then save the result
+  # back to the shared folder:
+  #
+  #   saveRDS(targets::tar_read(stroke_times),
+  #           file.path(Sys.getenv("PRJ_SHARED_PATH"),
+  #                     Sys.getenv("INPUT_DATA_FOLDER"), "stroke_times.rds"))
+  #
+  # tar_target(section_points, build_section_points(sez_shp, area_shp,
+  #                                                 pop_col = "POP21")),
+  # tar_target(urban_mask, build_urban_mask(sez_shp, tipo_loc_col = "TIPO_LOC")),
+  # tar_target(stroke_aoi,
+  #            smr_geo |> sf::st_transform(32632L) |> sf::st_union() |>
+  #              sf::st_buffer(40000)),
+  # tar_target(stroke_network,
+  #            build_stroke_network(stroke_aoi, urban_mask,
+  #                                 speed_model = "areu",
+  #                                 osm_dir = get_input_data_path("osm"))),
+  # tar_target(stroke_times,
+  #            build_stroke_times(stroke_network, stroke_centres,
+  #                               section_points)),
+  tar_target(stroke_times_path,
+             get_input_data_path("stroke_times.csv"),
+             format = "file"),
   tar_target(stroke_times,
-             build_stroke_times(stroke_network, stroke_centres,
-                                section_points)),
+             import_stroke_times(stroke_times_path, areas = area_shp$area)),
+
   tar_target(stroke_area, build_stroke_area(stroke_times)),
   tar_target(diag_stroke, check_stroke_access(stroke_times, stroke_area,
                                               print = FALSE)),
 
   # === THE MODELLING FRAME =================================================
-  # One sf carrying every covariate, standardised on the modelled set. This
-  # replaces smr_geo_di / smr_geo_ivsm / smr_geo_poll / smr_geo_stroke, each of
-  # which carried a single covariate and could drift out of row order with the
-  # others.
   tar_target(
     smr_geo_full,
     smr_geo |>
@@ -353,17 +349,6 @@ list(
 
   # === TRACER AND CONTROLS =================================================
   tar_target(smr_geo_tracer, attach_tracer_outcomes(smr_geo_full)),
-  # The tracer arm is fitted on the REFERENCE stroke outcome - I63 cerebral
-  # infarction, all ages - not on cerebrovascular mortality 0-74. The age
-  # ceiling belongs to the OECD/Eurostat avoidability definition, not to the
-  # clinical question, and pooling the haemorrhagic subtypes into the outcome
-  # dilutes any thrombectomy-access effect by construction. Leaving the control
-  # panel on the old outcome would have meant the panel testing a different
-  # model from the one the Results report.
-  #
-  # nce_exposure is deliberately NULL: the negative control exposure has not
-  # been chosen, and defaulting to something plausible would give the analysis
-  # an unearned appearance of completeness.
   tar_target(control_fits,
              fit_controls(smr_geo_allage, C_matrix, scale_factor,
                           exposure     = STROKE_EXPOSURE,
@@ -400,12 +385,20 @@ list(
   tar_target(fig_rr_compare,
              plot_rr_compare(aug_M5, aug_M6,
                              labels = c("BYM2 (M5)", "ESF (M6)"))),
+  # label_fun = mechanism_label turns "M_lifestyle_and_nc_ds" into
+  # "Lifestyle and NCDs"; ncol = 3 gives seven panels room to be maps rather
+  # than thumbnails.
   tar_target(fig_mech_facets,
              plot_smr_facets(smr_geo_mech_bym2,
                              cols   = dplyr::matches("^M_.*_bym2$"),
                              strip_suffix = "_bym2$",
+                             label_fun = mechanism_label,
+                             ncol = 3,
                              title = NULL)),
-  tar_target(fig_mech_exceedance, plot_exceedance_facets(smr_geo_mech_bym2)),
+  tar_target(fig_mech_exceedance,
+             plot_exceedance_facets(smr_geo_mech_bym2,
+                                    label_fun = mechanism_label,
+                                    ncol = 3)),
   tar_target(fig_concordance, plot_concordance(mechanism_concordance)),
   tar_target(fig_gp_density_map,
              plot_travel_time(

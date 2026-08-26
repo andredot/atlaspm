@@ -49,6 +49,7 @@ utils::globalVariables(c(
 
   # -- primary-care indicator (R/import_.R) -----------------------------------
   "numeratore", "denominatore", "indicatore",
+  "n_assistiti", "sum_inv_count", "sum_inv_weight",
 
   # -- NAR density reference implementation (R/nar_density.R) -----------------
   "resident_id", "gp_id", "event_date", "event_type", "death_date",
