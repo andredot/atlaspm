@@ -439,6 +439,7 @@ list(
 
   # === REPORT ==============================================================
   tar_quarto(thesis_results, path = file.path("reports", "thesis_results.qmd")),
+  tar_quarto(thesis_assets, path = file.path("reports", "thesis_assets.qmd")),
 
   # ==========================================================================
   # APPENDIX C: DEPRIVATION STABILITY, 2011 vs 2023

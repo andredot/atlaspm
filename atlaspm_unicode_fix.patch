@@ -1,0 +1,76 @@
+diff --git a/DESCRIPTION b/DESCRIPTION
+index 06df049..aa1b2ad 100644
+--- a/DESCRIPTION
++++ b/DESCRIPTION
+@@ -51,6 +51,7 @@ Suggests:
+     lintr,
+     qs,
+     qs2,
++    ragg,
+     rstudioapi,
+     spelling,
+     testthat,
+diff --git a/R/plot_report.R b/R/plot_report.R
+index 5fdc43f..70068d0 100644
+--- a/R/plot_report.R
++++ b/R/plot_report.R
+@@ -310,8 +310,19 @@ save_figure <- function(plot, name, dir = "output/figures",
+                         width = 190, height = 150, dpi = 300) {
+   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+   path <- file.path(dir, paste0(name, ".png"))
+-  ggplot2::ggsave(path, plot, width = width, height = height,
+-                  units = "mm", dpi = dpi, bg = "white")
++
++  # ragg does proper font fallback through systemfonts, so characters the
++  # default sans lacks - the >= in the exceedance legends, the en dash in the
++  # probability bands, the minus sign in the excess caption - resolve to some
++  # installed font instead of rendering as tofu. grDevices::png() on Windows
++  # goes through GDI and does not fall back at all.
++  args <- list(filename = path, plot = plot, width = width, height = height,
++               units = "mm", dpi = dpi, bg = "white")
++  if (requireNamespace("ragg", quietly = TRUE)) {
++    args[["device"]] <- ragg::agg_png
++  }
++  do.call(ggplot2::ggsave, args)
++
+   invisible(path)
+ }
+ 
+@@ -366,9 +377,16 @@ plot_pollution_pair <- function(geo,
+          ". Was add_pollution() run?", call. = FALSE)
+   }
+ 
+-  labs_pretty <- c("NO2 (ug/m3)" = "NO\u2082", "PM2.5 (ug/m3)" = "PM\u2082.\u2085")
++  # Subscripts as plotmath rather than U+2082/U+2085. R draws a plotmath
++  # subscript by positioning a normal digit, so it cannot fall back to tofu the
++  # way a literal subscript glyph does when the device font lacks it - which is
++  # what the default png() device on Windows does with these two codepoints.
++  # Unmatched columns are quoted so that every label is parseable and
++  # label_parsed below can never be handed something it cannot evaluate.
++  labs_pretty <- c("NO2 (ug/m3)" = "NO[2]", "PM2.5 (ug/m3)" = "PM[2.5]")
+   nm <- ifelse(names(cols) %in% names(labs_pretty),
+-               labs_pretty[names(cols)], names(cols))
++               labs_pretty[names(cols)],
++               sprintf('"%s"', names(cols)))
+ 
+   if (is.null(caption)) {
+     caption <- paste0(
+@@ -396,7 +414,8 @@ plot_pollution_pair <- function(geo,
+     return(
+       ggplot2::ggplot(long) +
+         ggplot2::geom_sf(ggplot2::aes(fill = .data[["value"]]), colour = NA) +
+-        ggplot2::facet_wrap(~ .data[["pollutant"]], nrow = 1) +
++        ggplot2::facet_wrap(~ .data[["pollutant"]], nrow = 1,
++                            labeller = ggplot2::label_parsed) +
+         ggplot2::scale_fill_viridis_c(
+           option = "inferno", direction = -1,
+           name = expression(paste(mu, "g/m"^3))
+@@ -415,7 +434,7 @@ plot_pollution_pair <- function(geo,
+         option = "inferno", direction = -1,
+         name = expression(paste(mu, "g/m"^3))
+       ) +
+-      ggplot2::labs(title = title) +
++      ggplot2::labs(title = parse(text = title)[[1]]) +
+       theme_atlas(map = TRUE) +
+       ggplot2::theme(
+         legend.position = "bottom",

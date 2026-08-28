@@ -1,0 +1,567 @@
+---
+title: "Tables and figures for Draft_Atlas_v3"
+subtitle: "Generated from the `targets` pipeline. Do not edit by hand."
+date: today
+format:
+  docx:
+    toc: true
+    toc-depth: 2
+    number-sections: false
+    fig-align: center
+execute:
+  echo: false
+  warning: false
+  message: false
+knitr:
+  opts_chunk:
+    dev: "ragg_png"
+    dpi: 300
+    fig.retina: 1
+    fig.path: "../output/thesis/inline/"
+---
+
+<!-- Rendered by targets::tar_make(). Every number and every figure below comes
+     from a pipeline target; nothing is computed in this document except
+     formatting and the Figure 1 flow diagram, which is drawn from the `flow`
+     target in reports/_thesis_assets.R. If a number is wrong, the fix belongs
+     in R/, not here. -->
+
+```{r setup}
+library(targets)
+library(dplyr)
+library(ggplot2)
+library(gtsummary)
+library(knitr)
+
+targets::tar_source(here::here("R"))
+source(here::here("reports", "_thesis_setup.R"))
+
+# _thesis_assets.R may live in reports/ (alongside _thesis_setup.R) or in R/
+# (where tar_source has already loaded it). Source it only if it is not
+# already loaded, so the document works either way and never sources twice.
+if (!exists("fig_manifest", inherits = TRUE)) {
+  source(here::here("reports", "_thesis_assets.R"))
+}
+
+tar_load(c(
+  # tables
+  table_one, desc_numbers, flow, model_coefficients, tbl_loo,
+  model_diagnostics, moran_residual, mechanism_table, mechanism_concordance,
+  i63_engine_table, control_table, pollutant_selection, aq_ranks,
+  sensitivity_coefficients, deprivation_resolution, deprivation_stability,
+  appendix_b, appendix_b_adapted, session_tbl, stroke_subtypes,
+  # figures
+  fig_pollution_pair, fig_pollution_shared, fig_excess_map, fig_excess_flagged,
+  fig_rr_map, fig_exceedance, fig_forest, fig_mech_facets, fig_mech_exceedance,
+  fig_hub_time, fig_i63_exceedance, fig_i63_raw, fig_rr_compare,
+  fig_concordance, fig_controls
+))
+```
+
+```{r export-pngs}
+# Writes every manifest figure to output/thesis/ as a 300 dpi PNG at thesis
+# dimensions, so the figures can also be placed by hand in Word if the DOCX
+# layout is not wanted.
+exported <- export_thesis_figures(env = environment())
+```
+
+Every numbered item below corresponds to a placeholder in the thesis. Captions
+are written for the thesis rather than copied from `thesis_results.qmd`, so they
+can be pasted directly; each carries the pipeline target it came from.
+
+Figures are also written individually to `output/thesis/` at 300 dpi and full
+text width (190 mm), via the project's own `save_figure()`.
+
+Read **Notes and unresolved items** at the end before inserting anything.
+
+---
+
+# Results
+
+## Table 1
+
+```{r tbl-1}
+thesis_table(
+  table_one, "1",
+  paste("Table 1. Characteristics of avoidable deaths, ATS Milano residents aged 0-74 years, 2022-2024. Columns are mutually exclusive, age is median (IQR), all other cells are n (column %)."),
+  "table_one")
+```
+
+## Table 2
+
+```{r tbl-2}
+desc_numbers$by_mechanism |>
+  mutate(deaths = fmt_num(deaths, 1), pct = fmt_pct(pct)) |>
+  thesis_table(
+    "2",
+    paste("Table 2. Avoidable deaths by the service function that could have averted them. Weighted counts: a death from a cause split equally between two mechanisms contributes 0.5 to each."))
+```
+
+### Table 2b (optional)
+
+```{r tbl-2b}
+desc_numbers$by_cause |>
+  head(20) |>
+  mutate(pct = fmt_pct(pct)) |>
+  thesis_table(
+    "2b",
+    paste("Twenty leading individual causes of avoidable death. Include only",
+          "if the Results text keeps the list of leading causes; otherwise",
+          "move to an appendix."),
+    "desc_numbers$by_cause",
+    col_names = c("Cause", "Deaths", "%"))
+```
+
+## Figure 1
+
+```{r fig-1, fig.width = 6.3, fig.height = 8.3}
+plot_flow_diagram(flow, stroke = stroke_subtypes)
+```
+
+`r fig_manifest$caption[fig_manifest$number == 1]`
+*Source: `flow` and `stroke_subtypes`; drawn by `plot_flow_diagram()`.*
+
+## Figure 2
+
+```{r fig-2, fig.width = 7.5, fig.height = 4.3}
+fig_pollution_shared
+```
+
+`r fig_manifest$caption[fig_manifest$number == 2]`
+*Source: `fig_pollution_shared`. See note N1.*
+
+## Figure 3
+
+```{r fig-3a, fig.width = 7.5, fig.height = 6}
+fig_excess_map
+```
+
+**Panel A — all areal units**
+
+```{r fig-3b, fig.width = 7.5, fig.height = 6}
+fig_excess_flagged
+```
+
+**Panel B — areas above the 0.80 cutoff**
+
+`r fig_manifest$caption[fig_manifest$number == 3]`
+*Source: `fig_excess_map`, `fig_excess_flagged`.*
+
+## Figure 4
+
+```{r fig-4a, fig.width = 7.5, fig.height = 6}
+fig_rr_map
+```
+
+**Panel A — smoothed relative risk**
+
+```{r fig-4b, fig.width = 7.5, fig.height = 6}
+fig_exceedance
+```
+
+**Panel B — exceedance probability (RR > 1.10)**
+
+`r fig_manifest$caption[fig_manifest$number == 4]`
+*Source: `fig_rr_map`, `fig_exceedance`.*
+
+## Table 3
+
+```{r tbl-3}
+tbl_loo |>
+  mutate(across(c(elpd_loo, se_elpd, p_loo, looic, elpd_diff, se_diff),
+                \(x) fmt_num(x, 1))) |>
+  thesis_table(
+    "3",
+    paste("Model comparison by approximate leave-one-out cross-validation,",
+          "ordered best first. Higher expected log predictive density is",
+          "better. The difference and its standard error are computed on",
+          "paired pointwise differences."),
+    "tbl_loo")
+```
+
+### Table 3b (optional, or appendix)
+
+```{r tbl-3b}
+model_diagnostics |>
+  mutate(across(c(rhat_max, ebfmi_min), \(x) fmt_num(x, 4)),
+         pct_divergent = fmt_pct(pct_divergent)) |>
+  select(model, rhat_max, ess_min, n_divergent, pct_divergent, ebfmi_min) |>
+  thesis_table(
+    "3b",
+    paste("Convergence and sampler diagnostics, M1-M7. Supports the",
+          "convergence sentence in the Results, which currently quotes the",
+          "maximum R-hat and minimum effective sample size without a table."),
+    "model_diagnostics",
+    col_names = c("Model", "Max R-hat", "Min ESS", "Divergent", "% divergent",
+                  "Min E-BFMI"))
+```
+
+### Table 3c (optional, or appendix)
+
+```{r tbl-3c}
+moran_residual |>
+  mutate(across(c(statistic, post_mean, post_low, post_high),
+                \(x) fmt_num(x, 3)),
+         p_value = fmt_p(p_value)) |>
+  select(model, statistic, p_value, post_mean, post_low, post_high) |>
+  thesis_table(
+    "3c",
+    paste("Moran's I on Pearson residuals, M1-M7. This is the table behind",
+          "the residual autocorrelation sequence quoted in the Results, which",
+          "is the argument for the spatial specification."),
+    "moran_residual",
+    col_names = c("Model", "Moran's I", "p", "Posterior mean I", "2.5%",
+                  "97.5%"))
+```
+
+## Table 4
+
+```{r tbl-4}
+model_coefficients |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3)),
+         crosses_null = ifelse(crosses_null, "yes", "no")) |>
+  select(model, label, estimate, ci_low, ci_high, crosses_null) |>
+  thesis_table(
+    "4",
+    paste("Covariate associations across model specifications. Relative risks",
+          "per standard deviation of the covariate, with 95% credible",
+          "intervals."),
+    "model_coefficients",
+    col_names = c("Model", "Term", "RR per SD", "2.5%", "97.5%",
+                  "CrI includes 1"))
+```
+
+## Figure 5
+
+```{r fig-5, fig.width = 7.5, fig.height = 8}
+fig_forest
+```
+
+`r fig_manifest$caption[fig_manifest$number == 5]`
+*Source: `fig_forest`.*
+
+## Table 5
+
+```{r tbl-5}
+mechanism_table |>
+  mutate(across(c(deaths, rho, rho_low, rho_high, spatial_sd, rr_min, rr_max),
+                \(x) fmt_num(x, 2))) |>
+  select(mechanism, deaths, rho, rho_low, rho_high, spatial_sd, rr_min, rr_max,
+         n_exceed) |>
+  thesis_table(
+    "5",
+    paste("Per-mechanism BYM2 models, all seven service-function strata.",
+          "Deaths are weighted counts. Rho is the share of residual variation",
+          "that is spatially structured; its intervals overlap across every",
+          "pair of strata, so the spread of point estimates should not be",
+          "read as a difference between service functions."),
+    "mechanism_table",
+    col_names = c("Service function", "Deaths", "rho", "2.5%", "97.5%",
+                  "Spatial SD", "Min RR", "Max RR", "Areas exceeding"))
+```
+
+## Figure 6
+
+```{r fig-6, fig.width = 7.5, fig.height = 8}
+fig_mech_facets
+```
+
+`r fig_manifest$caption[fig_manifest$number == 6]`
+*Source: `fig_mech_facets`.*
+
+## Figure 7
+
+```{r fig-7, fig.width = 7.5, fig.height = 8}
+fig_mech_exceedance
+```
+
+`r fig_manifest$caption[fig_manifest$number == 7]`
+*Source: `fig_mech_exceedance`.*
+
+## Figure 8
+
+```{r fig-8, fig.width = 6.3, fig.height = 6}
+fig_hub_time
+```
+
+`r fig_manifest$caption[fig_manifest$number == 8]`
+*Source: `fig_hub_time`.*
+
+## Table 6
+
+```{r tbl-6}
+i63_engine_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high, ess, rhat) |>
+  thesis_table(
+    "6",
+    paste("Specification ladder: all-age I63 cerebral infarction against",
+          "travel time to the nearest thrombectomy hub. Row two is the",
+          "reference model. The BYM2 and ESF rows remove the exposure's",
+          "spatial contrast along with the confounding, and are reported as a",
+          "bound rather than as a correction."),
+    "i63_engine_table",
+    col_names = c("Specification", "Term", "RR per SD", "2.5%", "97.5%",
+                  "ESS", "R-hat"))
+```
+
+## Table 7
+
+```{r tbl-7}
+control_table |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(role, outcome, label, estimate, ci_low, ci_high, expectation) |>
+  thesis_table(
+    "7",
+    paste("Tracer and control panel. Every arm is fitted on the reference",
+          "specification with the same adjustment set. The expectation column",
+          "was written before the estimates were seen."),
+    "control_table",
+    col_names = c("Role", "Outcome", "Exposure", "RR per SD", "2.5%", "97.5%",
+                  "Pre-specified expectation"))
+```
+
+## Figure 9
+
+```{r fig-9, fig.width = 6.3, fig.height = 6}
+fig_i63_exceedance
+```
+
+`r fig_manifest$caption[fig_manifest$number == 9]`
+*Source: `fig_i63_exceedance`.*
+
+## Figure 10
+
+```{r fig-10, fig.width = 6.3, fig.height = 5.2}
+fig_i63_raw
+```
+
+`r fig_manifest$caption[fig_manifest$number == 10]`
+*Source: `fig_i63_raw`. See note N5.*
+
+---
+
+# Strongly suggested additions
+
+Three pipeline objects support claims the thesis already makes in prose but does
+not illustrate. Each is a single insertion.
+
+## Figure 11 (suggested)
+
+```{r fig-11, fig.width = 6.3, fig.height = 5.5}
+fig_rr_compare
+```
+
+`r fig_manifest$caption[fig_manifest$number == 11]`
+*Source: `fig_rr_compare`.*
+
+## Figure 12 (suggested)
+
+```{r fig-12, fig.width = 6.3, fig.height = 5.5}
+fig_concordance
+```
+
+`r fig_manifest$caption[fig_manifest$number == 12]`
+*Source: `fig_concordance`.*
+
+### Table 8 (suggested) — the tabular version of Figure 12
+
+```{r tbl-8}
+mechanism_concordance$long |>
+  mutate(rho = fmt_num(rho, 3)) |>
+  head(15) |>
+  thesis_table(
+    "8",
+    paste("Most and least concordant pairs of mechanism risk surfaces. Use",
+          "this or Figure 12, not both."),
+    "mechanism_concordance$long",
+    col_names = c("Service function A", "Service function B", "Spearman rho"))
+```
+
+## Figure 13 (suggested)
+
+```{r fig-13, fig.width = 7.5, fig.height = 5.2}
+fig_controls
+```
+
+`r fig_manifest$caption[fig_manifest$number == 13]`
+*Source: `fig_controls`.*
+
+---
+
+# Annex and appendix material
+
+Referenced by name in the Methods, but with no content attached in the draft.
+
+## Annex A — pollutant selection
+
+```{r tbl-a1}
+pollutant_selection |>
+  thesis_table(
+    "A1",
+    paste("Pre-specified pollutant selection criteria. Every criterion is",
+          "computed on the exposure alone, before any outcome model was",
+          "fitted."),
+    "pollutant_selection")
+```
+
+```{r tbl-a2}
+aq_ranks |>
+  thesis_table(
+    "A2",
+    paste("Rank stability of the pollutant surfaces, 2013 to 2023. This is",
+          "the table behind the NO2 and PM2.5 rank correlations quoted in",
+          "Methods, Air pollution."),
+    "aq_ranks")
+```
+
+```{r tbl-a3}
+sensitivity_coefficients |>
+  mutate(across(c(estimate, ci_low, ci_high), \(x) fmt_num(x, 3))) |>
+  select(model, label, estimate, ci_low, ci_high) |>
+  thesis_table(
+    "A3",
+    paste("Deprivation measure sensitivity: the Deprivation Index against the",
+          "ISTAT index of social and material vulnerability. Promised in the",
+          "Annex by Methods, Sensitivity analysis."),
+    "sensitivity_coefficients",
+    col_names = c("Model", "Term", "RR per SD", "2.5%", "97.5%"))
+```
+
+## Appendix B — avoidable-cause coding table
+
+```{r tbl-b1}
+appendix_b_adapted |>
+  thesis_table(
+    "B1",
+    "Departures from the published OECD/Eurostat classification.",
+    "appendix_b_adapted")
+```
+
+```{r tbl-b2}
+appendix_b |>
+  thesis_table(
+    "B2",
+    paste("Full coding table: ICD-10 code to cause, category, weight and",
+          "service function. Set this in a smaller point size, landscape if",
+          "necessary."),
+    "appendix_b")
+```
+
+## Appendix C — deprivation stability and software
+
+```{r tbl-c1}
+deprivation_stability$overall |>
+  mutate(across(c(rho, pearson), \(x) fmt_num(x, 3))) |>
+  thesis_table(
+    "C1",
+    paste("Rank correlation of the Deprivation Index between 2011 and 2023,",
+          "overall and by geography layer. This is the source of the",
+          "stability correlation quoted in Methods, Deprivation."),
+    "deprivation_stability$overall",
+    col_names = c("Layer", "Areas", "Spearman rho", "Pearson r"))
+```
+
+```{r tbl-c2}
+deprivation_stability$quintiles |>
+  mutate(across(starts_with("pct_"), \(x) fmt_pct(x, 1))) |>
+  thesis_table(
+    "C2",
+    paste("Deprivation quintile transitions, 2011 to 2023. This is the source",
+          "of the same-quintile and one-class-shift percentages quoted in",
+          "Methods, Deprivation."),
+    "deprivation_stability$quintiles",
+    col_names = c("Layer", "Areas", "Same quintile", "Moved one",
+                  "Moved two or more"))
+```
+
+```{r tbl-c3}
+deprivation_resolution |>
+  thesis_table(
+    "C3",
+    paste("Deprivation index resolved to areal units. Under the previous",
+          "municipality-level construction every Milan NIL carried the same",
+          "value, so the within-Milan SD was exactly zero."),
+    "deprivation_resolution")
+```
+
+```{r tbl-c4}
+session_tbl |>
+  thesis_table("C4", "Package versions used for this run.", "session_tbl")
+```
+
+---
+
+# Inventory: pipeline figures with no thesis slot
+
+```{r unused-figures}
+tibble::tibble(target = fig_unused) |>
+  thesis_table(
+    "I1",
+    paste("Figures the pipeline builds that no thesis slot currently uses.",
+          "Listed so they are visible rather than forgotten; several are",
+          "candidates for the covariate distribution section."),
+    "fig_unused in reports/_thesis_assets.R",
+    col_names = "Target")
+```
+
+```{r exported-files}
+if (nrow(exported)) {
+  exported |>
+    mutate(path = basename(path)) |>
+    thesis_table(
+      "I2",
+      "Figure files written to output/thesis/ by this render.",
+      "export_thesis_figures()",
+      col_names = c("Figure", "Panel", "Target", "File"))
+} else {
+  cat("No figures were exported: none of the manifest targets were loaded.\n")
+}
+```
+
+---
+
+# Notes and unresolved items
+
+**N1. Figure 2 now resolves to a pipeline target.** An earlier reading of the
+rendered HTML concluded there was no pollution figure; that was wrong. The
+pipeline builds both `fig_pollution_pair` (free scales, each pollutant's own
+pattern) and `fig_pollution_shared` (one common legend). The shared-scale
+version is used above, because the claim the Methods actually make is that PM2.5
+varies less across the territory than NO2 does, and on free scales that
+difference is invisible. Neither is rendered in `thesis_results.qmd`, which is
+why the figure appeared to be missing.
+
+**N2. The DAG is still not in the pipeline.** It is the one Methods figure with
+no target and no source file. Exporting it from dagitty and adding it as a
+static file target would put it under version control with everything else.
+
+**N3. Table 5's placeholder caption in the thesis says "the three modelled
+strata"; `mechanism_table` returns seven.** Corrected in the caption above.
+
+**N4. Thesis Table 6 is labelled "Model or negative controls", but the Results
+prose in that section quotes the specification ladder, not the control panel.**
+Both are needed: the ladder is Table 6 and the control panel Table 7 above. This
+pushes the suggested concordance table to Table 8.
+
+**N5. The "discontinuity around 30-35 minutes" sentence.** Figure 10 is the plot
+it refers to. The claim is made in prose with no estimate behind it; if it is
+kept, `tracer_per_10min` or a spline term would be the way to support it.
+
+**N6. Appendix C now has content.** `deprivation_stability` was already in the
+pipeline but not rendered anywhere, which is why the 2011-to-2023 stability
+numbers in Methods had no table behind them. Tables C1 and C2 above are that
+table.
+
+**N7. Cross-check the I63 count.** `stroke_subtypes` and
+`outcome_feasibility_table` should agree on the number of I63 deaths. Figure 1
+takes its count from `stroke_subtypes` so that the exclusions shown sum to the
+total; if the feasibility table disagrees, the discrepancy is upstream and worth
+resolving before submission.
+
+**N8. Table 1 and Table 2 count service functions differently.** `tbl_one()`
+assigns each death a single combined `mechanism_any` label, so a split cause
+appears as "Screening + Tertiary prevention"; `desc_numbers$by_mechanism` splits
+the weight across both. Both are defensible, but on facing pages the difference
+reads as an error. Add a footnote to Table 1, or drop its service-function block
+since Table 2 covers it.

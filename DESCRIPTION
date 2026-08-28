@@ -51,6 +51,7 @@ Suggests:
     lintr,
     qs,
     qs2,
+    ragg,
     rstudioapi,
     spelling,
     testthat,
