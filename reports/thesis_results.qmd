@@ -59,7 +59,8 @@ tar_load(c(
   control_table, control_diagnostics, stroke_times_table,
   i63_engine_table, allage_table, tracer_engine_table,
   outcome_feasibility_table, stroke_subtypes, i63_smoothing, i63_exceedance,
-  appendix_b, appendix_b_adapted, session_tbl
+  appendix_b, appendix_b_adapted, session_tbl,
+  attribution_flagged, group_shares, mechanism_shares
 ))
 
 tar_load(c(fig_cmr_map, fig_smr_map, fig_rr_map, fig_exceedance,
@@ -67,7 +68,9 @@ tar_load(c(fig_cmr_map, fig_smr_map, fig_rr_map, fig_exceedance,
            fig_rr_compare, fig_mech_facets, fig_mech_exceedance,
            fig_concordance, scatter_smr_di,
            fig_gp_density_map, scatter_smr_gp,
-           fig_hub_time, fig_i63_pair, fig_i63_exceedance, fig_i63_raw))
+           fig_hub_time, fig_i63_pair, fig_i63_exceedance, fig_i63_raw,
+           fig_attribution, fig_driver_map,
+           fig_group_shares, fig_mechanism_shares))
 
 tar_load(c(aug_M3, aug_M5, aug_M6, smr_geo_full, smr_geo_tracer, crude_geo))
 ```
@@ -202,6 +205,45 @@ desc_numbers$by_mechanism |>
   mutate(deaths = fmt_num(deaths, 1), pct = fmt_pct(pct)) |>
   kable(col.names = c("Service function", "Deaths (weighted)", "%"),
         caption = "Deaths by the service function that could have averted them. Weighted: a death from a split cause contributes 0.5 to each of its two mechanisms.")
+```
+
+```{r composition-tables}
+group_shares |>
+  mutate(deaths = fmt_num(deaths, 1),
+         across(c(pct_deaths, pct_excess), \(x) fmt_pct(x)),
+         expected = fmt_num(expected, 1),
+         smr = fmt_num(smr, 2)) |>
+  select(stratum, deaths, pct_deaths, expected, smr, pct_excess) |>
+  kable(col.names = c("Cause group", "Deaths", "% of avoidable deaths",
+                      "Expected", "SMR", "% of excess"),
+        caption = paste("Avoidable deaths by OECD cause group. A death from a",
+                        "cause the list splits 50/50 still belongs to one",
+                        "group, so these sum to the total. The last column is",
+                        "the group's signed share of the study-area departure",
+                        "from the age-sex expectation."))
+
+mechanism_shares |>
+  mutate(deaths = fmt_num(deaths, 1),
+         across(c(pct_deaths, pct_excess), \(x) fmt_pct(x)),
+         expected = fmt_num(expected, 1),
+         smr = fmt_num(smr, 2)) |>
+  select(stratum, deaths, pct_deaths, expected, smr, pct_excess) |>
+  kable(col.names = c("Service function", "Deaths (weighted)",
+                      "% of avoidable deaths", "Expected", "SMR",
+                      "% of excess"),
+        caption = paste("Avoidable deaths by the service function that could",
+                        "have averted them. Weighted: a split-cause death",
+                        "contributes 0.5 to each of two functions, so these",
+                        "also sum to the total and the two tables' percentage",
+                        "columns are directly comparable."))
+```
+
+```{r fig-group-shares, fig.cap="Share of avoidable deaths, and of the excess over expectation, by OECD cause group."}
+fig_group_shares
+```
+
+```{r fig-mechanism-shares, fig.cap="The same, by service function."}
+fig_mechanism_shares
 ```
 
 ---
@@ -608,7 +650,102 @@ model_coefficients |>
 fig_forest
 ```
 
----
+
+## 4.5 What the excess is made of
+
+> The excess in each area can be decomposed into the determinants that produce
+> it. The reference is an area of the same age and sex structure sitting at the
+> study-area average on deprivation, NO~2~ and primary care density, with no
+> residual spatial effect; because the covariates enter as z-scores, that
+> reference is exactly the model intercept. Attribution across the components
+> uses Shapley values, which are the unique split that is exact, symmetric and
+> independent of the order the determinants are named in. A determinant on
+> which an area does better than average is attributed a negative number of
+> deaths: it is holding the excess down, and the positive shares exceed 100%
+> to compensate.
+>
+> `r attribution_sentence(attribution_flagged)`
+
+```{r attribution-table}
+attribution_flagged$by_component |>
+  mutate(across(c(rr, rr_low, rr_high), \(x) fmt_num(x, 3)),
+         across(c(deaths_yr, deaths_low, deaths_high), \(x) fmt_num(x, 2)),
+         across(c(pct, pct_log), \(x) fmt_pct(x))) |>
+  select(area, label, rr, rr_low, rr_high,
+         deaths_yr, deaths_low, deaths_high, pct, pct_log) |>
+  kable(col.names = c("Area", "Component", "RR", "2.5%", "97.5%",
+                      "Deaths/yr", "2.5%", "97.5%",
+                      "% of excess", "% of log RR"),
+        caption = paste("Decomposition of the flagged area's excess. RR is the",
+                        "component's own multiplier on relative risk; the",
+                        "death columns are its Shapley share of the excess.",
+                        "The last column is the log-scale share, which ignores",
+                        "the interaction between components and is shown only",
+                        "so the arithmetic can be checked by hand."))
+```
+
+```{r attribution-totals}
+attribution_flagged$totals |>
+  mutate(across(c(expected, baseline_yr, fitted_yr, excess_yr,
+                  excess_low, excess_high, rr_total), \(x) fmt_num(x, 2))) |>
+  select(area, observed, expected, baseline_yr, fitted_yr,
+         excess_yr, excess_low, excess_high, rr_total) |>
+  kable(col.names = c("Area", "Observed", "Expected", "Baseline/yr",
+                      "Fitted/yr", "Excess/yr", "2.5%", "97.5%", "Total RR"),
+        caption = "Totals for the decomposed area(s).")
+```
+
+```{r attribution-reconciliation}
+# Not decoration. The sequential decomposition that adds the covariates first
+# and the random effects last must reproduce residual_excess() exactly, because
+# they are the same quantity. If this table stops agreeing, one of the two is
+# wrong and the difference column says by how much.
+attribution_flagged$reconciliation |>
+  mutate(across(where(is.numeric), \(x) fmt_num(x, 3))) |>
+  kable(col.names = c("Area", "Sequential (ICAR + IID)",
+                      "residual_excess()", "Difference"),
+        caption = paste("Reconciliation against the §4.1 estimand. These are",
+                        "the same quantity computed two ways and should",
+                        "agree to rounding."))
+```
+
+```{r fig-attribution, fig.cap="Attributable excess avoidable deaths per year in the flagged area, by determinant."}
+fig_attribution
+```
+
+```{r fig-driver, fig.cap="Dominant contributor to each area's excess under M5."}
+fig_driver_map
+```
+
+::: {.callout-note collapse="true"}
+## Reading notes for §4.5
+
+- **This is a decomposition of a model, not of a causal effect.** It says how
+  the fitted risk surface is built, given the specification in §3. Every
+  identification problem in that specification is inherited whole: in
+  particular the covariates and the spatial term describe overlapping
+  variation, so the split between "deprivation" and "ICAR" is partly a
+  modelling choice and would move under M6 or M7. Report the ICAR share as
+  what the covariates did not absorb, not as a separate cause.
+- **The ICAR and IID components are reported separately on purpose.** A
+  spatially structured excess is shared with the neighbours and points at
+  something territorial; an unstructured one is that area alone and is the
+  first candidate for a data-quality explanation. Adding them together to get
+  one "random effect" number throws away the distinction that makes the
+  finding actionable.
+- **Do not clamp the negative contributions.** A stacked proportion bar cannot
+  represent a protective determinant, so it drops it and rescales the rest,
+  which turns a factor that is reducing deaths into one that is absent. The
+  figure above is a signed bar chart with intervals for that reason.
+- **The percentage intervals are absent where the excess interval spans zero.**
+  A share of approximately nothing is not a number, and printing one invites a
+  reader to take a ratio of two roundings seriously.
+- **The driver map is confident everywhere and should not be.** It colours all
+  areas, including the ones whose excess is indistinguishable from zero, where
+  the largest contribution is whichever noise term happens to win. Read it
+  against the exceedance map.
+:::
+
 
 # 5. Avoidable mortality by mechanism
 

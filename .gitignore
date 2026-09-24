@@ -13,3 +13,5 @@ _targets/
 *.html
 
 *.png
+
+*.rds

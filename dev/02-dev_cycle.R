@@ -16,7 +16,7 @@ prj_pkgs <- c(
   # estimation
   "geostan", "rstan", "loo",
   # output
-  "ggplot2", "gtsummary", "knitr",
+  "ggplot2", "gtsummary", "knitr", "leaflet",
   # pipeline
   "targets", "tarchetypes", "crew", "quarto", "here", "cli", "methods"
 )

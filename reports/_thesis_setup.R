@@ -389,6 +389,57 @@ software_paragraph <- function(st) {
   )
 }
 
+
+#' One sentence naming the dominant driver of a flagged area's excess.
+#'
+#' Written as a sentence rather than "see the table" because the thesis has to
+#' commit to a reading. It names the largest positive contributor, gives its
+#' share, and - if any component is pulling the other way - says so, since a
+#' protective determinant is the part a reader will otherwise miss.
+attribution_sentence <- function(att) {
+  d <- att$by_component
+  if (!nrow(d)) return("No area was decomposed.")
+
+  parts <- vapply(unique(d$area), function(a) {
+    x   <- d[d$area == a, , drop = FALSE]
+    x   <- x[order(-x$deaths_yr), , drop = FALSE]
+    top <- x[1, ]
+    tot <- att$totals[att$totals$area == a, ]
+
+    neg <- x[x$deaths_yr < 0, , drop = FALSE]
+    tail_txt <- if (nrow(neg)) {
+      sprintf(" %s ran the other way, holding the excess down by %s deaths per year.",
+              neg$label[which.min(neg$deaths_yr)],
+              fmt_num(abs(min(neg$deaths_yr)), 1))
+    } else ""
+
+    sprintf(paste0("In %s, %s deaths per year (95%% CrI %s to %s) occurred ",
+                   "beyond the study-average reference. The largest single ",
+                   "contributor was %s, at %s deaths per year (%s of the ",
+                   "area's excess).%s"),
+            a,
+            fmt_num(tot$excess_yr, 1), fmt_num(tot$excess_low, 1),
+            fmt_num(tot$excess_high, 1),
+            tolower(top$label), fmt_num(top$deaths_yr, 1),
+            fmt_pct(top$pct), tail_txt)
+  }, character(1))
+
+  paste(parts, collapse = " ")
+}
+
+
+#' One sentence on how concentrated the avoidable-death composition is.
+#'
+#' Takes either of the stratum_shares() tables.
+composition_sentence <- function(shares, n_top = 3, what = "cause groups") {
+  s   <- shares[order(-shares$pct_deaths), , drop = FALSE]
+  top <- utils::head(s, n_top)
+  sprintf("The %d largest %s accounted for %s of avoidable deaths (%s).",
+          n_top, what, fmt_pct(sum(top$pct_deaths)),
+          paste(sprintf("%s %s", tolower(top$stratum), fmt_pct(top$pct_deaths)),
+                collapse = "; "))
+}
+
 # --- the numbers card ---------------------------------------------------------
 
 numbers_card <- function(desc, area, excess, varred, moran_crude,
@@ -516,4 +567,54 @@ i63_smoothing_sentence <- function(sm, exc) {
     val("Range of smoothed relative risk"),
     val("Mixing parameter rho"),
     fmt_n(n80), fmt_n(exc[["n_areas"]]), fmt_n(n95))
+}
+
+#' One sentence naming the dominant driver of a flagged area's excess.
+#'
+#' Written as a sentence rather than "see the table" because the thesis has to
+#' commit to a reading. It names the largest positive contributor, gives its
+#' share, and - if any component is pulling the other way - says so, since a
+#' protective determinant is the part a reader will otherwise miss.
+attribution_sentence <- function(att) {
+  d <- att$by_component
+  if (!nrow(d)) return("No area was decomposed.")
+
+  parts <- vapply(unique(d$area), function(a) {
+    x   <- d[d$area == a, , drop = FALSE]
+    x   <- x[order(-x$deaths_yr), , drop = FALSE]
+    top <- x[1, ]
+    tot <- att$totals[att$totals$area == a, ]
+
+    neg <- x[x$deaths_yr < 0, , drop = FALSE]
+    tail_txt <- if (nrow(neg)) {
+      sprintf(" %s ran the other way, holding the excess down by %s deaths per year.",
+              neg$label[which.min(neg$deaths_yr)],
+              fmt_num(abs(min(neg$deaths_yr)), 1))
+    } else ""
+
+    sprintf(paste0("In %s, %s deaths per year (95%% CrI %s to %s) occurred ",
+                   "beyond the study-average reference. The largest single ",
+                   "contributor was %s, at %s deaths per year (%s of the ",
+                   "area's excess).%s"),
+            a,
+            fmt_num(tot$excess_yr, 1), fmt_num(tot$excess_low, 1),
+            fmt_num(tot$excess_high, 1),
+            tolower(top$label), fmt_num(top$deaths_yr, 1),
+            fmt_pct(top$pct), tail_txt)
+  }, character(1))
+
+  paste(parts, collapse = " ")
+}
+
+
+#' One sentence on how concentrated the avoidable-death composition is.
+#'
+#' Takes either of the stratum_shares() tables.
+composition_sentence <- function(shares, n_top = 3, what = "cause groups") {
+  s   <- shares[order(-shares$pct_deaths), , drop = FALSE]
+  top <- utils::head(s, n_top)
+  sprintf("The %d largest %s accounted for %s of avoidable deaths (%s).",
+          n_top, what, fmt_pct(sum(top$pct_deaths)),
+          paste(sprintf("%s %s", tolower(top$stratum), fmt_pct(top$pct_deaths)),
+                collapse = "; "))
 }

@@ -7,6 +7,7 @@ ATTACH_STARTUP_PKGS=TRUE
 PROJ_TITLE="Atlas of Preventable Mortality"
 PROJ_DESCRIPTION="A Bayesian Spatial Analysis of Preventable Mortality Determinants in the Milan Metropolitan Area: Evaluating Socioeconomic and Healthcare Access Inequalities"
 PROJ_URL="https://github.com/andredot/atlaspm"
+CARTO_API_KEY="cb1_3sjh_1_0a746cf19d52b06e89a61fbc"
 
 # Shared folders local locations
 # PATH should be a proper path (C:\\...)

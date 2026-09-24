@@ -334,6 +334,57 @@ list(
   tar_target(cond_independence,
              test_conditional_independence(fit_M4, smr_geo_full,
                                            var = "gp_density_z")),
+  # === ATTRIBUTION ==========================================================
+  tar_target(attribution_flagged,
+             attribution_local(fit_M5, smr_geo_full,
+                               excess  = excess,
+                               n_years = N_YEARS)),
+
+  # Descriptive composition of avoidable deaths. No model, so both
+  # classifications are answerable for every stratum.
+  tar_target(group_shares,     stratum_shares(smr_geo_full, "G",
+                                              n_years = N_YEARS)),
+  tar_target(mechanism_shares, stratum_shares(smr_geo_full, "M",
+                                              n_years = N_YEARS)),
+
+  # The same composition inside the flagged area(s). This is the one that
+  # answers "and what are Baggio's excess deaths actually deaths from".
+  tar_target(group_shares_flagged,
+             stratum_shares(smr_geo_full, "G",
+                            area    = excess$per_area$area[excess$per_area$flagged],
+                            n_years = N_YEARS)),
+  tar_target(mechanism_shares_flagged,
+             stratum_shares(smr_geo_full, "M",
+                            area    = excess$per_area$area[excess$per_area$flagged],
+                            n_years = N_YEARS)),
+
+  # --- figures --------------------------------------------------------------
+  tar_target(fig_attribution,
+             plot_attribution(
+               attribution_flagged,
+               caption = paste(
+                 "Excess measured against an area of the same age and sex",
+                 "structure at the study-area average on every covariate,",
+                 "with no residual spatial effect. Shapley attribution;",
+                 "negative values indicate a determinant holding the excess",
+                 "down. Filled points exclude zero."))),
+  tar_target(fig_driver_map,
+             plot_dominant_driver(
+               attribution_all, smr_geo_full,
+               caption = paste(
+                 "Colour is the largest positive contribution and is drawn",
+                 "with equal confidence everywhere; read it beside the",
+                 "exceedance map, which is where the confidence lives."))),
+  tar_target(fig_group_shares,
+             plot_stratum_shares(
+               group_shares,
+               caption = "OECD cause groups. Faded bars carry fewer than 20 deaths.")),
+  tar_target(fig_mechanism_shares,
+             plot_stratum_shares(
+               mechanism_shares,
+               caption = paste(
+                 "Service functions. Weighted: a death from a split cause",
+                 "contributes 0.5 to each of its two functions."))),  # --- figures --------------------------------------------------------------
 
   # === PER-MECHANISM MODELS (all seven strata) =============================
   tar_target(models_mechanism,
@@ -662,5 +713,59 @@ list(
   # --- the stroke report ----------------------------------------------------
   tar_quarto(stroke_results, path = file.path("reports", "stroke_results.qmd")),
 
+  # === SHINY APP BUNDLE =====================================================
+  tar_target(excess_M6,
+             residual_excess(fit_M6, smr_geo_full,
+                             n_years     = N_YEARS,
+                             threshold   = RR_THRESHOLD,
+                             prob_cutoff = PROB_CUTOFF)),
+
+  # spatial = "auto" splits the BYM2 convolution into ICAR and IID, and reports
+  # one combined term for the ESF, which has no such split to make.
+  tar_target(attribution_all,
+             attribution_grid(fit_M5, smr_geo_full,
+                              n_years = N_YEARS, spatial = "auto")),
+  tar_target(attribution_M6,
+             attribution_grid(fit_M6, smr_geo_full,
+                              n_years = N_YEARS, spatial = "auto")),
+
+  # The adjusted I63 surface has a fit but no augment target of its own.
+  tar_target(aug_i63_adj,
+             augment_bym2(smr_geo_allage,
+                          i63_engines[["BYM2 + adjustment set"]],
+                          exp_col   = "i63_exp",
+                          pop_col   = "person_years",
+                          threshold = RR_THRESHOLD_STROKE)),
+
+  tar_target(
+    app_data,
+    build_app_data(
+      path            = "inst/shiny/atlas/app_data.rds",
+      smr_geo_full    = smr_geo_full,
+      nil_shp         = nil_shp,
+      pop_shp         = pop_shp,
+      gp_density_area = gp_density_area,
+      crude_geo       = crude_geo,
+      aug_total       = aug_M3,
+      aug_models      = list(M5 = aug_M5, M6 = aug_M6),
+      mech_bym2       = smr_geo_mech_bym2,
+      excess          = list(M5 = excess,          M6 = excess_M6),
+      attribution     = list(M5 = attribution_all, M6 = attribution_M6),
+      smr_geo_allage  = smr_geo_allage,
+      aug_i63         = aug_i63,
+      aug_i63_adj     = aug_i63_adj,
+      stroke_centres  = stroke_centres,
+      n_years             = N_YEARS,
+      rr_threshold        = RR_THRESHOLD,
+      rr_threshold_stroke = RR_THRESHOLD_STROKE,
+      prob_cutoff         = PROB_CUTOFF,
+      aq_year             = AQ_YEAR
+    ),
+    format = "file",
+    # The file is written to a fixed path in the project, so it must be written
+    # by the main process rather than shipped back from a crew worker.
+    storage = "main",
+    retrieval = "main"
+  ),
   tar_target(JustDontCareLastComma, NULL)
 )
